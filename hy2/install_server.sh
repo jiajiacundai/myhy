@@ -795,6 +795,29 @@ get_installed_version() {
   fi
 }
 
+get_latest_version() {
+  if [[ -n "$VERSION" ]]; then
+    echo "$VERSION"
+    return
+  fi
+
+  local _tmpfile=$(mktemp)
+  if ! curl -sS -H 'Accept: application/vnd.github.v3+json' "$API_BASE_URL/releases/latest" -o "$_tmpfile"; then
+    error "Failed to get the latest version from GitHub API, please check your network and try again."
+    exit 11
+  fi
+
+  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"app/v.*"')
+  _latest_version=${_latest_version#'"app/'}
+  _latest_version=${_latest_version%'"'}
+
+  if [[ -n "$_latest_version" ]]; then
+    echo "$_latest_version"
+  fi
+
+  rm -f "$_tmpfile"
+}
+
 download_hysteria() {
   local _version="$1"
   local _destination="$2"
