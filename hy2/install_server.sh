@@ -1049,6 +1049,7 @@ perform_check_update() {
   fi
 }
 
+# 主函数保持不变
 main() {
   parse_arguments "$@"
 
