@@ -928,6 +928,17 @@ perform_install_hysteria_home_legacy() {
 }
 
 perform_install() {
+  # 在函数开始处添加这段新代码
+  if [[ -z "$VERSION" ]]; then
+    VERSION=$(get_latest_version)
+    if [[ -z "$VERSION" ]]; then
+      error "Failed to get the latest version. Please check your network or specify a version manually."
+      exit 11
+    fi
+  fi
+
+  echo "Installing Hysteria version: $VERSION"
+  
   local _is_frash_install
   local _is_upgrade_from_hysteria1
   if ! is_hysteria_installed; then
