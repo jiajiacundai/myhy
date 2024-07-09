@@ -795,21 +795,6 @@ get_installed_version() {
   fi
 }
 
-get_latest_version() {
-  if [[ -n "$VERSION" ]]; then
-    echo "$VERSION"
-    return
-  fi
-
-  local _latest_version=$(curl -sS "https://github.com/apernet/hysteria/releases/latest" | grep -oP '(?<=tag/app/v)[0-9.]+')
-  if [[ -n "$_latest_version" ]]; then
-    echo "v$_latest_version"
-  else
-    error "Failed to get the latest version. Please check your network or specify a version manually."
-    exit 11
-  fi
-}
-
 download_hysteria() {
   local _version="$1"
   local _destination="$2"
