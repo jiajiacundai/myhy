@@ -814,7 +814,10 @@ download_hysteria() {
   local _version="$1"
   local _destination="$2"
 
-  local _download_url="$REPO_URL/releases/download/app/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
+  # 移除版本号中的 'v' 前缀
+  _version="${_version#v}"
+
+  local _download_url="$REPO_URL/releases/download/app/v$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
   echo "Downloading hysteria binary: $_download_url ..."
   if ! curl -R -H 'Cache-Control: no-cache' "$_download_url" -o "$_destination"; then
     error "Download failed. URL: $_download_url"
@@ -928,7 +931,6 @@ perform_install_hysteria_home_legacy() {
 }
 
 perform_install() {
-  # 在函数开始处添加这段新代码
   if [[ -z "$VERSION" ]]; then
     VERSION=$(get_latest_version)
     if [[ -z "$VERSION" ]]; then
