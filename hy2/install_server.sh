@@ -801,21 +801,13 @@ get_latest_version() {
     return
   fi
 
-  local _tmpfile=$(mktemp)
-  if ! curl -sS -H 'Accept: application/vnd.github.v3+json' "$API_BASE_URL/releases/latest" -o "$_tmpfile"; then
-    error "Failed to get the latest version from GitHub API, please check your network and try again."
+  local _latest_version=$(curl -sS "https://github.com/apernet/hysteria/releases/latest" | grep -oP '(?<=tag/app/v)[0-9.]+')
+  if [[ -n "$_latest_version" ]]; then
+    echo "v$_latest_version"
+  else
+    error "Failed to get the latest version. Please check your network or specify a version manually."
     exit 11
   fi
-
-  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"app/v.*"')
-  _latest_version=${_latest_version#'"app/'}
-  _latest_version=${_latest_version%'"'}
-
-  if [[ -n "$_latest_version" ]]; then
-    echo "$_latest_version"
-  fi
-
-  rm -f "$_tmpfile"
 }
 
 download_hysteria() {
@@ -825,7 +817,8 @@ download_hysteria() {
   local _download_url="$REPO_URL/releases/download/app/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
   echo "Downloading hysteria binary: $_download_url ..."
   if ! curl -R -H 'Cache-Control: no-cache' "$_download_url" -o "$_destination"; then
-    error "Download failed, please check your network and try again."
+    error "Download failed. URL: $_download_url"
+    error "Please check your network and try again."
     return 11
   fi
   return 0
