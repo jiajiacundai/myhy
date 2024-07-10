@@ -347,8 +347,8 @@ check_environment_operating_system() {
   fi
 
   error "This script only supports Linux."
-  note "If you want to override this, you can set the OPERATING_SYSTEM environment variable to your operating system."
-  exit 86
+  note "Specify OPERATING_SYSTEM=[linux|darwin|freebsd|windows] to bypass this check and force this script to run on this $(uname)."
+  exit 95
 }
 
 check_environment_architecture() {
@@ -359,215 +359,716 @@ check_environment_architecture() {
 
   case "$(uname -m)" in
     'i386' | 'i686')
-      ARCHITECTURE=386
-      return
+      ARCHITECTURE='386'
       ;;
-    'x86_64')
-      ARCHITECTURE=amd64
-      return
+    'amd64' | 'x86_64')
+      ARCHITECTURE='amd64'
       ;;
-    'armv5tel' | 'armv6l')
-      ARCHITECTURE=arm
-      return
-      ;;
-    'armv7' | 'armv7l')
-      ARCHITECTURE=arm
-      return
+    'armv5tel' | 'armv6l' | 'armv7' | 'armv7l')
+      ARCHITECTURE='arm'
       ;;
     'armv8' | 'aarch64')
-      ARCHITECTURE=arm64
-      return
+      ARCHITECTURE='arm64'
       ;;
-    'mipsle' | 'mips64le')
-      ARCHITECTURE=mipsle
-      return
+    'mips' | 'mipsle' | 'mips64' | 'mips64le')
+      ARCHITECTURE='mipsle'
       ;;
     's390x')
-      ARCHITECTURE=s390x
-      return
+      ARCHITECTURE='s390x'
+      ;;
+    *)
+      error "The architecture '$(uname -a)' is not supported."
+      note "Specify ARCHITECTURE=<architecture> to bypass this check and force this script to run on this $(uname -m)."
+      exit 8
       ;;
   esac
-
-  error "Architecture $(uname -m) is not supported."
-  note "If you want to override this, you can set the ARCHITECTURE environment variable to your architecture."
-  exit 87
 }
 
-check_environment_hysteria_user() {
-  if [[ -n "$HYSTERIA_USER" ]]; then
-    warning "HYSTERIA_USER=$HYSTERIA_USER detected, hysteria user detection will not be performed."
+check_environment_systemd() {
+  if [[ -d "/run/systemd/system" ]] || grep -q systemd <(ls -l /sbin/init); then
     return
   fi
 
-  HYSTERIA_USER=hysteria
+  case "$FORCE_NO_SYSTEMD" in
+    '1')
+      warning "FORCE_NO_SYSTEMD=1, we will proceed as normal even if systemd is not detected."
+      ;;
+    '2')
+      warning "FORCE_NO_SYSTEMD=2, we will proceed but skip all systemd related commands."
+      ;;
+    *)
+      error "This script only supports Linux distributions with systemd."
+      note "Specify FORCE_NO_SYSTEMD=1 to disable this check and force this script to run as if systemd exists."
+      note "Specify FORCE_NO_SYSTEMD=2 to disable this check and skip all systemd related commands."
+      ;;
+  esac
 }
 
-check_environment_hysteria_home_dir() {
-  if [[ -n "$HYSTERIA_HOME_DIR" ]]; then
-    warning "HYSTERIA_HOME_DIR=$HYSTERIA_HOME_DIR detected, hysteria home directory detection will not be performed."
+check_environment_curl() {
+  if has_command curl; then
     return
   fi
 
-  HYSTERIA_HOME_DIR="/var/lib/hysteria"
+  install_software curl
 }
 
-usage() {
-  echo "Usage: $SCRIPT_NAME <operation> [options...]"
-  echo
-  echo "operations:"
-  echo "  install       Install or update hysteria"
-  echo "  remove        Remove installed hysteria"
-  echo "  check_update  Check the latest hysteria release"
-  echo
-  echo "options:"
-  echo "  --force                 Force install even if installed"
-  echo "  --version <version>     Specify version to install"
-  echo "  --file <file>           Specify local file to install"
-  echo
-  echo "example:"
-  echo "  $SCRIPT_NAME install"
-  echo "  $SCRIPT_NAME install --version v1.3.1"
-  echo "  $SCRIPT_NAME remove"
-  echo
-  echo "environment:"
-  echo "  PACKAGE_MANAGEMENT_INSTALL"
-  echo "      Package install command."
-  echo "  OPERATING_SYSTEM"
-  echo "      Override the auto-detected operating system, supported: linux."
-  echo "  ARCHITECTURE"
-  echo "      Override the auto-detected architecture, supported: 386, amd64, arm, arm64, mipsle, s390x."
-  echo "  FORCE_NO_ROOT"
-  echo "      Force the script to run without root privileges."
-  echo "  HYSTERIA_USER"
-  echo "      Specify hysteria user, default: hysteria."
-  echo "  HYSTERIA_HOME_DIR"
-  echo "      Specify hysteria home directory, default: /var/lib/hysteria."
-}
-
-detect_latest_version() {
-  if [[ -n "$VERSION" ]]; then
-    warning "VERSION=$VERSION detected, latest version detection will not be performed."
+check_environment_grep() {
+  if has_command grep; then
     return
   fi
 
-  echo -n "Fetching latest release... "
-  local _releases_json
-  _releases_json=$(curl "$API_BASE_URL/releases/latest")
-
-  if ! VERSION=$(echo "$_releases_json" | grep -oP '(?<="tag_name": "v)[^"]+'); then
-    error "Failed to fetch latest release"
-    exit 1
-  fi
-
-  VERSION="v$VERSION"
-  echo "$VERSION"
+  install_software grep
 }
 
-fetch_release_binary() {
-  local _destination="$1"
-  local _version="${2:-$VERSION}"
-
-  local _url="$REPO_URL/releases/download/$_version/hysteria-linux-$ARCHITECTURE"
-  echo "Fetching hysteria binary from $_url"
-  curl -o "$_destination" "$_url"
-  chmod +x "$_destination"
-}
-
-do_install() {
-  check_permission
+check_environment() {
   check_environment_operating_system
   check_environment_architecture
-  check_environment_hysteria_user
-  check_environment_hysteria_home_dir
+  check_environment_systemd
+  check_environment_curl
+  check_environment_grep
+}
 
-  detect_latest_version
+vercmp_segment() {
+  local _lhs="$1"
+  local _rhs="$2"
 
-  if [[ -z "$LOCAL_FILE" ]]; then
-    local _tmpfile
-    _tmpfile=$(mktemp)
-    fetch_release_binary "$_tmpfile"
-    install -D "$_tmpfile" "$EXECUTABLE_INSTALL_PATH"
-    rm "$_tmpfile"
-  else
-    install -D "$LOCAL_FILE" "$EXECUTABLE_INSTALL_PATH"
+  if [[ "x$_lhs" == "x$_rhs" ]]; then
+    echo 0
+    return
+  fi
+  if [[ -z "$_lhs" ]]; then
+    echo -1
+    return
+  fi
+  if [[ -z "$_rhs" ]]; then
+    echo 1
+    return
+  fi
+
+  local _lhs_num="${_lhs//[A-Za-z]*/}"
+  local _rhs_num="${_rhs//[A-Za-z]*/}"
+
+  if [[ "x$_lhs_num" == "x$_rhs_num" ]]; then
+    echo 0
+    return
+  fi
+  if [[ -z "$_lhs_num" ]]; then
+    echo -1
+    return
+  fi
+  if [[ -z "$_rhs_num" ]]; then
+    echo 1
+    return
+  fi
+  local _numcmp=$(($_lhs_num - $_rhs_num))
+  if [[ "$_numcmp" -ne 0 ]]; then
+    echo "$_numcmp"
+    return
+  fi
+
+  local _lhs_suffix="${_lhs#"$_lhs_num"}"
+  local _rhs_suffix="${_rhs#"$_rhs_num"}"
+
+  if [[ "x$_lhs_suffix" == "x$_rhs_suffix" ]]; then
+    echo 0
+    return
+  fi
+  if [[ -z "$_lhs_suffix" ]]; then
+    echo 1
+    return
+  fi
+  if [[ -z "$_rhs_suffix" ]]; then
+    echo -1
+    return
+  fi
+  if [[ "$_lhs_suffix" < "$_rhs_suffix" ]]; then
+    echo -1
+    return
+  fi
+  echo 1
+}
+
+vercmp() {
+  local _lhs=${1#v}
+  local _rhs=${2#v}
+
+  while [[ -n "$_lhs" && -n "$_rhs" ]]; do
+    local _clhs="${_lhs/.*/}"
+    local _crhs="${_rhs/.*/}"
+
+    local _segcmp="$(vercmp_segment "$_clhs" "$_crhs")"
+    if [[ "$_segcmp" -ne 0 ]]; then
+      echo "$_segcmp"
+      return
+    fi
+
+    _lhs="${_lhs#"$_clhs"}"
+    _lhs="${_lhs#.}"
+    _rhs="${_rhs#"$_crhs"}"
+    _rhs="${_rhs#.}"
+  done
+
+  if [[ "x$_lhs" == "x$_rhs" ]]; then
+    echo 0
+    return
+  fi
+
+  if [[ -z "$_lhs" ]]; then
+    echo -1
+    return
+  fi
+
+  if [[ -z "$_rhs" ]]; then
+    echo 1
+    return
+  fi
+
+  return
+}
+
+check_hysteria_user() {
+  local _default_hysteria_user="$1"
+
+  if [[ -n "$HYSTERIA_USER" ]]; then
+    return
+  fi
+
+  if [[ ! -e "$SYSTEMD_SERVICES_DIR/hysteria-server.service" ]]; then
+    HYSTERIA_USER="$_default_hysteria_user"
+    return
+  fi
+
+  HYSTERIA_USER="$(grep -o '^User=\w*' "$SYSTEMD_SERVICES_DIR/hysteria-server.service" | tail -1 | cut -d '=' -f 2 || true)"
+
+  if [[ -z "$HYSTERIA_USER" ]]; then
+    HYSTERIA_USER="$_default_hysteria_user"
+  fi
+}
+
+check_hysteria_homedir() {
+  local _default_hysteria_homedir="$1"
+
+  if [[ -n "$HYSTERIA_HOME_DIR" ]]; then
+    return
   fi
 
   if ! is_user_exists "$HYSTERIA_USER"; then
-    useradd -r -d "$HYSTERIA_HOME_DIR" -s /sbin/nologin "$HYSTERIA_USER"
+    HYSTERIA_HOME_DIR="$_default_hysteria_homedir"
+    return
   fi
 
-  mkdir -p "$CONFIG_DIR"
-  chown "$HYSTERIA_USER:$HYSTERIA_USER" "$CONFIG_DIR"
-
-  install_content '-m 644' "$(systemd_unit_content)" "$SYSTEMD_SERVICES_DIR/hysteria.service"
-  systemctl daemon-reload
-  systemctl enable hysteria
-  systemctl start hysteria
+  HYSTERIA_HOME_DIR="$(eval echo ~"$HYSTERIA_USER")"
 }
 
-do_remove() {
-  check_permission
 
-  systemctl stop hysteria
-  systemctl disable hysteria
-  systemctl daemon-reload
+###
+# ARGUMENTS PARSER
+###
 
-  remove_file "$EXECUTABLE_INSTALL_PATH"
-  remove_file "$SYSTEMD_SERVICES_DIR/hysteria.service"
-  userdel -r "$HYSTERIA_USER"
+show_usage_and_exit() {
+  echo
+  echo -e "\t$(tbold)$SCRIPT_NAME$(treset) - hysteria server install script"
+  echo
+  echo -e "Usage:"
+  echo
+  echo -e "$(tbold)Install hysteria$(treset)"
+  echo -e "\t$0 [ -f | -l <file> | --version <version> ]"
+  echo -e "Flags:"
+  echo -e "\t-f, --force\tForce re-install latest or specified version even if it has been installed."
+  echo -e "\t-l, --local <file>\tInstall specified hysteria binary instead of download it."
+  echo -e "\t--version <version>\tInstall specified version instead of the latest."
+  echo
+  echo -e "$(tbold)Remove hysteria$(treset)"
+  echo -e "\t$0 --remove"
+  echo
+  echo -e "$(tbold)Check for the update$(treset)"
+  echo -e "\t$0 -c"
+  echo -e "\t$0 --check"
+  echo
+  echo -e "$(tbold)Show this help$(treset)"
+  echo -e "\t$0 -h"
+  echo -e "\t$0 --help"
+  exit 0
 }
 
-do_check_update() {
-  detect_latest_version
-  echo "The latest release of hysteria is $VERSION"
-}
-
-main() {
-  while [[ $# -gt 0 ]]; do
+parse_arguments() {
+  while [[ "$#" -gt '0' ]]; do
     case "$1" in
-      install | remove | check_update)
-        OPERATION="$1"
+      '--remove')
+        if [[ -n "$OPERATION" && "$OPERATION" != 'remove' ]]; then
+          show_argument_error_and_exit "Option '--remove' is in conflict with other options."
+        fi
+        OPERATION='remove'
         ;;
-      --version)
+      '--version')
+        VERSION="$2"
+        if [[ -z "$VERSION" ]]; then
+          show_argument_error_and_exit "Please specify the version for option '--version'."
+        fi
         shift
-        VERSION="$1"
+        if ! has_prefix "$VERSION" 'v'; then
+          show_argument_error_and_exit "Version numbers should begin with 'v' (such as 'v2.0.0'), got '$VERSION'"
+        fi
         ;;
-      --force)
-        FORCE=1
+      '-c' | '--check')
+        if [[ -n "$OPERATION" && "$OPERATION" != 'check' ]]; then
+          show_argument_error_and_exit "Option '-c' or '--check' is in conflict with other options."
+        fi
+        OPERATION='check_update'
         ;;
-      --file)
-        shift
-        LOCAL_FILE="$1"
+      '-f' | '--force')
+        FORCE='1'
         ;;
-      --help | -h)
-        usage
-        exit 0
+      '-h' | '--help')
+        show_usage_and_exit
+        ;;
+      '-l' | '--local')
+        LOCAL_FILE="$2"
+        if [[ -z "$LOCAL_FILE" ]]; then
+          show_argument_error_and_exit "Please specify the local binary to install for option '-l' or '--local'."
+        fi
+        break
         ;;
       *)
-        show_argument_error_and_exit "Unknown argument: $1"
+        show_argument_error_and_exit "Unknown option '$1'"
         ;;
     esac
     shift
   done
 
   if [[ -z "$OPERATION" ]]; then
-    show_argument_error_and_exit "Operation is not specified"
+    OPERATION='install'
   fi
 
+  # validate arguments
   case "$OPERATION" in
-    install)
-      do_install
-      ;;
-    remove)
-      do_remove
-      ;;
-    check_update)
-      do_check_update
+    'install')
+      if [[ -n "$VERSION" && -n "$LOCAL_FILE" ]]; then
+        show_argument_error_and_exit '--version and --local cannot be used together.'
+      fi
       ;;
     *)
-      show_argument_error_and_exit "Unknown operation: $OPERATION"
+      if [[ -n "$VERSION" ]]; then
+        show_argument_error_and_exit "--version is only valid for install operation."
+      fi
+      if [[ -n "$LOCAL_FILE" ]]; then
+        show_argument_error_and_exit "--local is only valid for install operation."
+      fi
+      ;;
+  esac
+}
+
+
+###
+# FILE TEMPLATES
+###
+
+# /etc/systemd/system/hysteria-server.service
+tpl_hysteria_server_service_base() {
+  local _config_name="$1"
+
+  cat << EOF
+[Unit]
+Description=Hysteria Server Service (${_config_name}.yaml)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$EXECUTABLE_INSTALL_PATH server --config ${CONFIG_DIR}/${_config_name}.yaml
+WorkingDirectory=$HYSTERIA_HOME_DIR
+User=$HYSTERIA_USER
+Group=$HYSTERIA_USER
+Environment=HYSTERIA_LOG_LEVEL=info
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# /etc/systemd/system/hysteria-server.service
+tpl_hysteria_server_service() {
+  tpl_hysteria_server_service_base 'config'
+}
+
+# /etc/systemd/system/hysteria-server@.service
+tpl_hysteria_server_x_service() {
+  tpl_hysteria_server_service_base '%i'
+}
+
+# /etc/hysteria/config.yaml
+tpl_etc_hysteria_config_yaml() {
+  cat << EOF
+# listen: :443
+
+acme:
+  domains:
+    - your.domain.net
+  email: your@email.com
+
+auth:
+  type: password
+  password: $(generate_random_password)
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://news.ycombinator.com/
+    rewriteHost: true
+EOF
+}
+
+
+###
+# SYSTEMD
+###
+
+get_running_services() {
+  if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
+    return
+  fi
+
+  systemctl list-units --state=active --plain --no-legend \
+    | grep -o "hysteria-server@*[^\s]*.service" || true
+}
+
+restart_running_services() {
+  if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
+    return
+  fi
+
+  echo "Restarting running service ... "
+
+  for service in $(get_running_services); do
+    echo -ne "Restarting $service ... "
+    systemctl restart "$service"
+    echo "done"
+  done
+}
+
+stop_running_services() {
+  if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
+    return
+  fi
+
+  echo "Stopping running service ... "
+
+  for service in $(get_running_services); do
+    echo -ne "Stopping $service ... "
+    systemctl stop "$service"
+    echo "done"
+  done
+}
+
+
+###
+# HYSTERIA & GITHUB API
+###
+
+is_hysteria_installed() {
+  # RETURN VALUE
+  # 0: hysteria is installed
+  # 1: hysteria is not installed
+
+  if [[ -f "$EXECUTABLE_INSTALL_PATH" || -h "$EXECUTABLE_INSTALL_PATH" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+is_hysteria1_version() {
+  local _version="$1"
+
+  has_prefix "$_version" "v1." || has_prefix "$_version" "v0."
+}
+
+get_installed_version() {
+  if is_hysteria_installed; then
+    if "$EXECUTABLE_INSTALL_PATH" version > /dev/null 2>&1; then
+      "$EXECUTABLE_INSTALL_PATH" version | grep Version | grep -o 'v[.0-9]*'
+    elif "$EXECUTABLE_INSTALL_PATH" -v > /dev/null 2>&1; then
+      # hysteria 1
+      "$EXECUTABLE_INSTALL_PATH" -v | cut -d ' ' -f 3
+    fi
+  fi
+}
+
+get_latest_version() {
+  if [[ -n "$VERSION" ]]; then
+    echo "$VERSION"
+    return
+  fi
+
+  local _tmpfile=$(mktemp)
+  if ! curl -sS -H 'Accept: application/vnd.github.v3+json' "$API_BASE_URL/releases/latest" -o "$_tmpfile"; then
+    error "Failed to get the latest version from GitHub API, please check your network and try again."
+    exit 11
+  fi
+
+  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"app/v.*"')
+  _latest_version=${_latest_version#'"app/'}
+  _latest_version=${_latest_version%'"'}
+
+  if [[ -n "$_latest_version" ]]; then
+    echo "$_latest_version"
+  fi
+
+  rm -f "$_tmpfile"
+}
+
+download_hysteria() {
+  local _version="$1"
+  local _destination="$2"
+
+  local _download_url="$REPO_URL/releases/download/app/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
+  echo "Downloading hysteria binary: $_download_url ..."
+  if ! curl -R -H 'Cache-Control: no-cache' "$_download_url" -o "$_destination"; then
+    error "Download failed, please check your network and try again."
+    return 11
+  fi
+  return 0
+}
+
+check_update() {
+  # RETURN VALUE
+  # 0: update available
+  # 1: installed version is latest
+
+  echo -ne "Checking for installed version ... "
+  local _installed_version="$(get_installed_version)"
+  if [[ -n "$_installed_version" ]]; then
+    echo "$_installed_version"
+  else
+    echo "not installed"
+  fi
+
+  echo -ne "Checking for latest version ... "
+  local _latest_version="$(get_latest_version)"
+  if [[ -n "$_latest_version" ]]; then
+    echo "$_latest_version"
+    VERSION="$_latest_version"
+  else
+    echo "failed"
+    return 1
+  fi
+
+  local _vercmp="$(vercmp "$_installed_version" "$_latest_version")"
+  if [[ "$_vercmp" -lt 0 ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+
+###
+# ENTRY
+###
+
+perform_install_hysteria_binary() {
+  if [[ -n "$LOCAL_FILE" ]]; then
+    note "Performing local install: $LOCAL_FILE"
+
+    echo -ne "Installing hysteria executable ... "
+
+    if install -Dm755 "$LOCAL_FILE" "$EXECUTABLE_INSTALL_PATH"; then
+      echo "ok"
+    else
+      exit 2
+    fi
+
+    return
+  fi
+
+  local _tmpfile=$(mktemp)
+
+  if ! download_hysteria "$VERSION" "$_tmpfile"; then
+    rm -f "$_tmpfile"
+    exit 11
+  fi
+
+  echo -ne "Installing hysteria executable ... "
+
+  if install -Dm755 "$_tmpfile" "$EXECUTABLE_INSTALL_PATH"; then
+    echo "ok"
+  else
+    exit 13
+  fi
+
+  rm -f "$_tmpfile"
+}
+
+perform_remove_hysteria_binary() {
+  remove_file "$EXECUTABLE_INSTALL_PATH"
+}
+
+perform_install_hysteria_example_config() {
+  install_content -Dm644 "$(tpl_etc_hysteria_config_yaml)" "$CONFIG_DIR/config.yaml" ""
+}
+
+perform_install_hysteria_systemd() {
+  if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
+    return
+  fi
+
+  install_content -Dm644 "$(tpl_hysteria_server_service)" "$SYSTEMD_SERVICES_DIR/hysteria-server.service" "1"
+  install_content -Dm644 "$(tpl_hysteria_server_x_service)" "$SYSTEMD_SERVICES_DIR/hysteria-server@.service" "1"
+
+  systemctl daemon-reload
+}
+
+perform_remove_hysteria_systemd() {
+  remove_file "$SYSTEMD_SERVICES_DIR/hysteria-server.service"
+  remove_file "$SYSTEMD_SERVICES_DIR/hysteria-server@.service"
+
+  systemctl daemon-reload
+}
+
+perform_install_hysteria_home_legacy() {
+  if ! is_user_exists "$HYSTERIA_USER"; then
+    echo -ne "Creating user $HYSTERIA_USER ... "
+    useradd -r -d "$HYSTERIA_HOME_DIR" -m "$HYSTERIA_USER"
+    echo "ok"
+  fi
+}
+
+perform_install() {
+  local _is_frash_install
+  local _is_upgrade_from_hysteria1
+  if ! is_hysteria_installed; then
+    _is_frash_install=1
+  elif is_hysteria1_version "$(get_installed_version)"; then
+    _is_upgrade_from_hysteria1=1
+  fi
+
+  local _is_update_required
+
+  if [[ -n "$LOCAL_FILE" ]] || [[ -n "$VERSION" ]] || check_update; then
+    _is_update_required=1
+  fi
+
+  if [[ "x$FORCE" == "x1" ]]; then
+    if [[ -z "$_is_update_required" ]]; then
+      note "Option '--force' detected, re-install even if installed version is the latest."
+    fi
+    _is_update_required=1
+  fi
+
+  if [[ -z "$_is_update_required" ]]; then
+    echo "$(tgreen)Installed version is up-to-date, there is nothing to do.$(treset)"
+    return
+  fi
+
+  if is_hysteria1_version "$VERSION"; then
+    error "This script can only install Hysteria 2."
+    exit 95
+  fi
+
+  perform_install_hysteria_binary
+  perform_install_hysteria_example_config
+  perform_install_hysteria_home_legacy
+  perform_install_hysteria_systemd
+
+  if [[ -n "$_is_frash_install" ]]; then
+    echo
+    echo -e "$(tbold)Congratulation! Hysteria 2 has been successfully installed on your server.$(treset)"
+    echo
+    echo -e "What's next?"
+    echo
+    echo -e "\t+ Take a look at the differences between Hysteria 2 and Hysteria 1 at https://hysteria.network/docs/misc/2-vs-1/"
+    echo -e "\t+ Check out the quick server config guide at $(tblue)https://hysteria.network/docs/getting-started/Server/$(treset)"
+    echo -e "\t+ Edit server config file at $(tred)$CONFIG_DIR/config.yaml$(treset)"
+    echo -e "\t+ Start your hysteria server with $(tred)systemctl start hysteria-server.service$(treset)"
+    echo -e "\t+ Configure hysteria start on system boot with $(tred)systemctl enable hysteria-server.service$(treset)"
+    echo
+  elif [[ -n "$_is_upgrade_from_hysteria1" ]]; then
+    echo -e "Skip automatic service restart due to $(tred)incompatible$(treset) upgrade."
+    echo
+    echo -e "$(tbold)Hysteria has been successfully update to $VERSION from Hysteria 1.$(treset)"
+    echo
+    echo -e "$(tred)Hysteria 2 uses a completely redesigned protocol & config, which is NOT compatible with the version 1.x.x in any way.$(treset)"
+    echo
+    echo -e "\t+ Take a look at the behavior changes in Hysteria 2 at $(tblue)https://hysteria.network/docs/misc/2-vs-1/$(treset)"
+    echo -e "\t+ Check out the quick server configuration guide for Hysteria 2 at $(tblue)https://hysteria.network/docs/getting-started/Server/$(treset)"
+    echo -e "\t+ Migrate server config file to the Hysteria 2 at $(tred)$CONFIG_DIR/config.yaml$(treset)"
+    echo -e "\t+ Start your hysteria server with $(tred)systemctl restart hysteria-server.service$(treset)"
+    echo -e "\t+ Configure hysteria start on system boot with $(tred)systemctl enable hysteria-server.service$(treset)"
+  else
+    restart_running_services
+
+    echo
+    echo -e "$(tbold)Hysteria has been successfully update to $VERSION.$(treset)"
+    echo
+    echo -e "Check out the latest changelog $(tblue)https://github.com/apernet/hysteria/blob/master/CHANGELOG.md$(treset)"
+    echo
+  fi
+}
+
+perform_remove() {
+  perform_remove_hysteria_binary
+  stop_running_services
+  perform_remove_hysteria_systemd
+
+  echo
+  echo -e "$(tbold)Congratulation! Hysteria has been successfully removed from your server.$(treset)"
+  echo
+  echo -e "You still need to remove configuration files and ACME certificates manually with the following commands:"
+  echo
+  echo -e "\t$(tred)rm -rf "$CONFIG_DIR"$(treset)"
+  if [[ "x$HYSTERIA_USER" != "xroot" ]]; then
+    echo -e "\t$(tred)userdel -r "$HYSTERIA_USER"$(treset)"
+  fi
+  if [[ "x$FORCE_NO_SYSTEMD" != "x2" ]]; then
+    echo
+    echo -e "You still might need to disable all related systemd services with the following commands:"
+    echo
+    echo -e "\t$(tred)rm -f /etc/systemd/system/multi-user.target.wants/hysteria-server.service$(treset)"
+    echo -e "\t$(tred)rm -f /etc/systemd/system/multi-user.target.wants/hysteria-server@*.service$(treset)"
+    echo -e "\t$(tred)systemctl daemon-reload$(treset)"
+  fi
+  echo
+}
+
+perform_check_update() {
+  if check_update; then
+    echo
+    echo -e "$(tbold)Update available: $VERSION$(treset)"
+    echo
+    echo -e "$(tgreen)You can download and install the latest version by execute this script without any arguments.$(treset)"
+    echo
+  else
+    echo
+    echo "$(tgreen)Installed version is up-to-date.$(treset)"
+    echo
+  fi
+}
+
+main() {
+  parse_arguments "$@"
+
+  check_permission
+  check_environment
+  check_hysteria_user "hysteria"
+  check_hysteria_homedir "/var/lib/$HYSTERIA_USER"
+
+  case "$OPERATION" in
+    "install")
+      perform_install
+      ;;
+    "remove")
+      perform_remove
+      ;;
+    "check_update")
+      perform_check_update
+      ;;
+    *)
+      error "Unknown operation '$OPERATION'."
       ;;
   esac
 }
 
 main "$@"
+
+# vim:set ft=bash ts=2 sw=2 sts=2 et:
