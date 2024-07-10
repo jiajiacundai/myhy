@@ -79,6 +79,7 @@ echo "apt autoclean"
 rm -f debain_up10_11.sh
 
 # 卸载并删除python2
+curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/remove_python2.sh | bash
 
 # 重启
 reboot
