@@ -50,3 +50,11 @@ sudo update-grub
 
 # 提示用户需要重启系统以使用新的内核
 echo "内核已更新，请重启系统以使用新的内核版本。"
+
+# 提示
+echo "# 查看已安装的内核"
+echo "dpkg --get-selections | grep linux"
+echo "# 找到除了5.10.xxxx-cloud-amd64以外的所有内核，用如下命令卸载："
+echo "apt autoremove --purge linux-image-4.19.0-5-amd64"
+echo "apt autoremove"
+echo "apt autoclean"
