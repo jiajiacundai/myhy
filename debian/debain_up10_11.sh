@@ -67,6 +67,19 @@ sudo update-grub
 # 提示用户需要重启系统以使用新的内核
 echo "内核已更新，请重启系统以使用新的内核版本。"
 
+# 删除脚本
+rm -f debain_up10_11.sh
+
+# 卸载并删除python2
+curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/remove_python2.sh | bash
+
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    echo "Installed Debian version: $VERSION"
+else
+    echo "Could not determine Debian version."
+fi
+
 # 提示
 echo "# 查看已安装的内核"
 echo "dpkg --get-selections | grep linux"
@@ -74,12 +87,6 @@ echo "# 找到除了5.10.xxxx-cloud-amd64以外的所有内核，用如下命令
 echo "apt autoremove --purge linux-image-4.19.0-5-amd64"
 echo "apt autoremove"
 echo "apt autoclean"
-
-# 删除脚本
-rm -f debain_up10_11.sh
-
-# 卸载并删除python2
-curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/remove_python2.sh | bash
 
 # 重启
 reboot
