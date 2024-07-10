@@ -48,6 +48,18 @@ sudo apt install linux-image-cloud-amd64 -y
 # 更新 GRUB 配置文件
 sudo update-grub
 
+# 查找并卸载 4.19 版本的内核
+echo "# 查看已安装的内核"
+dpkg --get-selections | grep linux
+echo "# 开始卸载内核，注：完全卸载4.1内核选NO"
+for kernel in $(dpkg --get-selections | grep -E 'linux-image-4\.19\..*-cloud-amd64' | awk '{print $1}'); do
+    echo "卸载内核: $kernel"
+    sudo apt remove --purge -y $kernel
+done
+
+# 更新 GRUB 配置文件
+sudo update-grub
+
 # 提示用户需要重启系统以使用新的内核
 echo "内核已更新，请重启系统以使用新的内核版本。"
 
@@ -58,3 +70,8 @@ echo "# 找到除了5.10.xxxx-cloud-amd64以外的所有内核，用如下命令
 echo "apt autoremove --purge linux-image-4.19.0-5-amd64"
 echo "apt autoremove"
 echo "apt autoclean"
+
+# 删除脚本
+rm -f debain_up10_11.sh
+
+# 重启
