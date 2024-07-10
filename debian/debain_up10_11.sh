@@ -75,3 +75,4 @@ echo "apt autoclean"
 rm -f debain_up10_11.sh
 
 # 重启
+reboot
