@@ -78,5 +78,7 @@ echo "apt autoclean"
 # 删除脚本
 rm -f debain_up10_11.sh
 
+# 卸载并删除python2
+
 # 重启
 reboot
