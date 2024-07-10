@@ -57,6 +57,10 @@ for kernel in $(dpkg --get-selections | grep -E 'linux-image-4\.19\..*-cloud-amd
     sudo apt remove --purge -y $kernel
 done
 
+# 卸载 linux-image-cloud-amd64 内核
+echo "卸载内核: linux-image-cloud-amd64"
+sudo apt remove --purge -y linux-image-cloud-amd64
+
 # 更新 GRUB 配置文件
 sudo update-grub
 
