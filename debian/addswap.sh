@@ -48,10 +48,15 @@ delete_cron_entry() {
 }
 
 add_swap() {
-  _green "Please enter the desired amount of swap to add, recommended to be twice the size of the memory!"
   _green "请输入需要添加的swap，建议为内存的2倍！"
-  _green "Please enter the swap value in megabytes (MB) (leave blank and press Enter for default, which is twice the memory):"
+  _green "请输入swap数值，以MB计算(留空回车则默认为内存的2倍):"
   reading "请输入swap数值，以MB计算(留空回车则默认为内存的2倍):" SWAP
+  # 添加3秒延迟后自动输入512
+  sleep 3
+  if [ -z "$SWAP" ]; then
+    SWAP=512
+    echo $SWAP
+  fi
   if [ -z "$SWAP" ]; then
     total_memory=$(free -m | awk '/^Mem:/{print $2}')
     SWAP=$((total_memory * 2))
