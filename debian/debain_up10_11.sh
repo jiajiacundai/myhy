@@ -106,7 +106,6 @@ fi
 
 # 删除swap
 curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.sh | bash -s -- --remove
-rm -f addswap.sh
 
 # 提示
 echo "# 查看已安装的内核"
