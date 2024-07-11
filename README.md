@@ -8,6 +8,10 @@ wget -O debain_up10_11.sh --no-check-certificate https://iii.sanguoguoguo.free.h
 curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/remove_python2.sh | bash
 ```
 # 添加Swap空间
+```shell
 curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.sh | bash -s -- --add
+```
 # 移除Swap空间
+```shell
 curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.sh | bash -s -- --remove
+```
