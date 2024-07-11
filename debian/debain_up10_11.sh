@@ -80,6 +80,33 @@ else
     echo "Could not determine Debian version."
 fi
 
+# 添加swap
+curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.sh | bash -s -- --add
+
+# 清理独立包
+# 更新包列表并安装 aptitude
+echo "Updating package list and installing aptitude..."
+sudo apt install -y aptitude
+
+# 查找系统中的孤立包
+echo "Searching for orphaned packages..."
+orphaned_packages=$(sudo aptitude search '~o')
+
+if [ -z "$orphaned_packages" ]; then
+    echo "No orphaned packages found."
+else
+    echo "Orphaned packages found:"
+    echo "$orphaned_packages"
+    
+    # 清理系统中的孤立包
+    echo "Purging orphaned packages..."
+    sudo aptitude purge -y '~o'
+    echo "Orphaned packages have been purged."
+fi
+
+# 删除swap
+curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.sh | bash -s -- --remove
+
 # 提示
 echo "# 查看已安装的内核"
 echo "dpkg --get-selections | grep linux"
