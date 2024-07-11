@@ -189,4 +189,5 @@ check_swap() {
   exit 1
 }
 
-main
+main "$@"
+
