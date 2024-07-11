@@ -115,5 +115,13 @@ echo "apt autoremove --purge linux-image-4.19.0-5-amd64"
 echo "apt autoremove"
 echo "apt autoclean"
 
+# 打印已安装的debian版本
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    echo "Installed Debian version: $VERSION"
+else
+    echo "Could not determine Debian version."
+fi
+
 # 重启
 reboot
