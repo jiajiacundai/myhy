@@ -172,7 +172,7 @@ get_version() {
     fi
     # Get Hysteria release version number
     TMP_FILE="$(mktemp)"
-    # if ! curl -x "${PROXY}" -sS -H "Accept: application/vnd.github.v3+json" -o "$TMP_FILE" 'https://api.github.com/repos/apernet/hysteria/releases/latest'; then
+    # if ! curl -x "${PROXY}" -sS -H "Accept: application/vnd.github.v3+json" -o "$TMP_FILE" 'https://githubapi.xinxin.f5.si/repos/apernet/hysteria/releases/latest'; then
     #     "rm" "$TMP_FILE"
     #     echo 'error: Failed to get release list, please check your network.'
     #     exit 1
