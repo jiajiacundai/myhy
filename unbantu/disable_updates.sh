@@ -12,8 +12,8 @@ sudo sed -i.bak 's/1/0/' /etc/apt/apt.conf.d/10periodic
 sudo sed -i.bak 's/1/0/' /etc/apt/apt.conf.d/20auto-upgrades
 
 # 选择 No
-echo "重新配置 unattended-upgrades..."
-sudo dpkg-reconfigure unattended-upgrades
+# echo "重新配置 unattended-upgrades..."
+# sudo dpkg-reconfigure unattended-upgrades
 
 # 禁用 unattended-upgrades 服务
 echo "禁用 unattended-upgrades 服务..."
