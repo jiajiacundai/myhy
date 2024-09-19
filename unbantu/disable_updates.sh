@@ -26,7 +26,7 @@ sudo systemctl disable unattended-upgrades
 
 # 清空 apt 缓存
 echo "清空 apt 缓存..."
-sudo apt autoremove # 移除不在使用的软件包
+sudo apt autoremove -y # 移除不在使用的软件包
 sudo apt clean && sudo apt autoclean # 清理下载文件的存档
 sudo rm -rf /var/cache/apt
 sudo rm -rf /var/lib/apt/lists
