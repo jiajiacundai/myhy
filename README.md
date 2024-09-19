@@ -15,3 +15,7 @@ curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.
 ```shell
 curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.sh | bash -s -- --remove
 ```
+# unbantu禁用一键脚本
+```shell
+curl -s https://iii.sanguoguoguo.us.kg/https://raw.githubusercontent.com/jiajiacundai/myhy/main/unbantu/disable_updates.sh | bash
+```
