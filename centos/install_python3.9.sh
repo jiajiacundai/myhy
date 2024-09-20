@@ -55,6 +55,10 @@ ll /usr/bin/ | grep python
 # 检查 Python 版本
 python --version
 
+# 删除python已下载文件
+rm -rf Python-3.9.6
+rm -f Python-3.9.6.tgz
+
 # python初始化设置
 cat << EOF > up_yum.py
 # -*- coding: utf-8 -*-
