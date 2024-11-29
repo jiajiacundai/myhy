@@ -1,4 +1,4 @@
-// 增加安全头，增加压缩优化，增加使用缓存存储中也使用 cacheKey
+// 增加安全头，增加压缩优化，增加使用缓存键 cacheKey
 const TARGET_DOMAIN = 'https://yingshi.xinxinran.pp.ua';
 const REPLACEMENT_DOMAIN = 'lvdou66.sanguoguo.dedyn.io';
 const CACHE_TTL = 3600; // 缓存时间 1小时
