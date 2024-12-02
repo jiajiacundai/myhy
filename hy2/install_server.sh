@@ -30,7 +30,7 @@ SYSTEMD_SERVICES_DIR="/etc/systemd/system"
 CONFIG_DIR="/etc/hysteria"
 
 # URLs of GitHub
-REPO_URL="https://github.com/apernet/hysteria"
+REPO_URL="https://iii.sanguoguoguo.us.kg/https://github.com/apernet/hysteria"
 API_BASE_URL="https://githubapi.xinxin.f5.si/repos/apernet/hysteria"
 
 # curl command line flags.
