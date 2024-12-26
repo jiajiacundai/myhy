@@ -59,7 +59,7 @@ show_menu() {
 # 下载最新版本的realm文件
 download_realm() {
     # 自动获取最新版本号
-    local version=$(curl -s https://api.github.com/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    local version=$(curl -s https://iii.sanguoguoguo.us.kg/https://api.github.com/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
     if [ -z "$version" ]; then
         echo "无法获取最新版本号，请检查网络连接或 GitHub API 状态！"
@@ -74,22 +74,22 @@ download_realm() {
     # 根据架构和操作系统选择下载地址
     case "$arch-$os" in
         x86_64-linux)
-            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-unknown-linux-gnu.tar.gz"
+            download_url="https://iii.sanguoguoguo.us.kg/https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-unknown-linux-gnu.tar.gz"
             ;;
         x86_64-darwin)
-            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-apple-darwin.tar.gz"
+            download_url="https://iii.sanguoguoguo.us.kg/https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-apple-darwin.tar.gz"
             ;;
         aarch64-linux)
-            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-aarch64-unknown-linux-gnu.tar.gz"
+            download_url="https://iii.sanguoguoguo.us.kg/https://github.com/zhboner/realm/releases/download/${version}/realm-aarch64-unknown-linux-gnu.tar.gz"
             ;;
         aarch64-darwin)
-            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-aarch64-apple-darwin.tar.gz"
+            download_url="https://iii.sanguoguoguo.us.kg/https://github.com/zhboner/realm/releases/download/${version}/realm-aarch64-apple-darwin.tar.gz"
             ;;
         arm-linux)
-            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-arm-unknown-linux-gnueabi.tar.gz"
+            download_url="https://iii.sanguoguoguo.us.kg/https://github.com/zhboner/realm/releases/download/${version}/realm-arm-unknown-linux-gnueabi.tar.gz"
             ;;
         armv7-linux)
-            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-armv7-unknown-linux-gnueabi.tar.gz"
+            download_url="https://iii.sanguoguoguo.us.kg/https://github.com/zhboner/realm/releases/download/${version}/realm-armv7-unknown-linux-gnueabi.tar.gz"
             ;;
         *)
             echo "不支持的架构或操作系统: $arch-$os"
