@@ -56,11 +56,69 @@ show_menu() {
     check_realm_service_status
 }
 
+# 下载最新版本的realm文件
+download_realm() {
+    # 自动获取最新版本号
+    local version=$(curl -s https://api.github.com/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+    if [ -z "$version" ]; then
+        echo "无法获取最新版本号，请检查网络连接或 GitHub API 状态！"
+        return 1
+    fi
+
+    # 获取系统架构和操作系统
+    local arch=$(uname -m)
+    local os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    local download_url=""
+
+    # 根据架构和操作系统选择下载地址
+    case "$arch-$os" in
+        x86_64-linux)
+            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-unknown-linux-gnu.tar.gz"
+            ;;
+        x86_64-darwin)
+            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-apple-darwin.tar.gz"
+            ;;
+        aarch64-linux)
+            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-aarch64-unknown-linux-gnu.tar.gz"
+            ;;
+        aarch64-darwin)
+            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-aarch64-apple-darwin.tar.gz"
+            ;;
+        arm-linux)
+            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-arm-unknown-linux-gnueabi.tar.gz"
+            ;;
+        armv7-linux)
+            download_url="https://github.com/zhboner/realm/releases/download/${version}/realm-armv7-unknown-linux-gnueabi.tar.gz"
+            ;;
+        *)
+            echo "不支持的架构或操作系统: $arch-$os"
+            return 1
+            ;;
+    esac
+
+    # 下载文件
+    echo "下载地址: $download_url"
+    wget -O realm.tar.gz "$download_url"
+
+    # 解压文件
+    if [ -f realm.tar.gz ]; then
+        echo "解压 realm.tar.gz..."
+        tar -zxvf realm.tar.gz
+        echo "解压完成。"
+    else
+        echo "文件下载失败。"
+        return 1
+    fi
+
+    return 0
+}
+
 # 部署环境的函数
 deploy_realm() {
     mkdir -p /root/realm
     cd /root/realm
-    wget -O realm.tar.gz https://github.com/zhboner/realm/releases/download/v2.7.0/realm-x86_64-unknown-linux-gnu.tar.gz
+    download_realm
     tar -xvf realm.tar.gz
     chmod +x realm
     # 创建服务文件
