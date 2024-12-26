@@ -119,7 +119,7 @@ deploy_realm() {
     mkdir -p /root/realm
     cd /root/realm
     download_realm
-    tar -xvf realm.tar.gz
+    # tar -xvf realm.tar.gz
     chmod +x realm
     # 创建服务文件
     echo "[Unit]
