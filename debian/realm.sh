@@ -103,9 +103,9 @@ download_realm() {
 
     # 解压文件
     if [ -f realm.tar.gz ]; then
-        echo "解压 realm.tar.gz..."
+        # echo "解压 realm.tar.gz..."
         tar -zxvf realm.tar.gz
-        echo "解压完成。"
+        # echo "解压完成。"
     else
         echo "文件下载失败。"
         return 1
