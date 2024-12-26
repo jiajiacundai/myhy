@@ -59,7 +59,7 @@ show_menu() {
 # 下载最新版本的realm文件
 download_realm() {
     # 自动获取最新版本号
-    local version=$(curl -s https://iii.sanguoguoguo.us.kg/https://api.github.com/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    local version=$(curl -s https://githubapi.xinxin.f5.si/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
     if [ -z "$version" ]; then
         echo "无法获取最新版本号，请检查网络连接或 GitHub API 状态！"
