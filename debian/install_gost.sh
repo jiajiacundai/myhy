@@ -63,12 +63,13 @@ install_gost() {
         ;;
     esac
     get_download_url="$base_url/tags/$version"
-    download_url=$(curl -s "$get_download_url" | grep -Eo "\"browser_download_url\": \".*${os}.*${cpu_arch}.*\"" | awk -F'["]' '{print $4}')
-    echo "下载链接: https://iii.xinxinran.pp.ua/${download_url}"
+    download_url0=$(curl -s "$get_download_url" | grep -Eo "\"browser_download_url\": \".*${os}.*${cpu_arch}.*\"" | awk -F'["]' '{print $4}')
+    download_url="https://iii.xinxinran.pp.ua/$download_url0"
+    echo "下载链接: $download_url"
 
     # Download the binary
     echo "Downloading gost version $version..."
-    curl -fsSL -o gost.tar.gz "https://iii.xinxinran.pp.ua/$download_url"
+    curl -fsSL -o gost.tar.gz $download_url
 
     # Extract and install the binary
     echo "Installing gost..."
