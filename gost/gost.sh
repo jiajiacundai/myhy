@@ -50,10 +50,10 @@ function Install_ct() {
   chmod -R 777 /usr/bin/gost
 
   # 下载和安装服务文件
-  wget --no-check-certificate https://cdn.kuxueyun.com/script/Multi-EasyGost/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
+  wget --no-check-certificate https://iii.xinxinran.pp.ua/https://raw.githubusercontent.com/jiajiacundai/myhy/refs/heads/main/gost/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
   
   # 下载和配置 gost 配置文件
-  mkdir /etc/gost && wget --no-check-certificate https://cdn.kuxueyun.com/script/Multi-EasyGost/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
+  mkdir /etc/gost && wget --no-check-certificate https://iii.xinxinran.pp.ua/https://raw.githubusercontent.com/jiajiacundai/myhy/refs/heads/main/gost/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
 
   # 启用并重启 gost 服务
   systemctl enable gost && systemctl restart gost
