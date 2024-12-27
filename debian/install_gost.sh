@@ -64,7 +64,7 @@ install_gost() {
     esac
     get_download_url="$base_url/tags/$version"
     download_url=$(curl -s "$get_download_url" | grep -Eo "\"browser_download_url\": \".*${os}.*${cpu_arch}.*\"" | awk -F'["]' '{print $4}')
-    echo "下载链接: $download_url"
+    echo "下载链接: https://iii.xinxinran.pp.ua/${download_url}"
 
     # Download the binary
     echo "Downloading gost version $version..."
