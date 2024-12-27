@@ -10,7 +10,7 @@ fi
 
 # Set the desired GitHub repository
 repo="go-gost/gost"
-base_url="https://iii.xinxinran.pp.ua/https://githubapi.xinxin.f5.si/repos/$repo/releases"
+base_url="https://githubapi.xinxin.f5.si/repos/$repo/releases"
 
 # Function to download and install gost
 install_gost() {
