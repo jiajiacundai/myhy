@@ -74,7 +74,11 @@ download_realm() {
     # 根据架构和操作系统选择下载地址
     case "$arch-$os" in
         x86_64-linux)
-            download_url="https://iii.xinxinran.pp.ua/https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-unknown-linux-gnu.tar.gz"
+            if grep -q "CentOS Linux 7" /etc/os-release 2>/dev/null; then
+                download_url="https://iii.xinxinran.pp.ua/https://github.com/jiajiacundai/myhy/releases/download/realm/realm.tar.gz"
+            else
+                download_url="https://iii.xinxinran.pp.ua/https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-unknown-linux-gnu.tar.gz"
+            fi
             ;;
         x86_64-darwin)
             download_url="https://iii.xinxinran.pp.ua/https://github.com/zhboner/realm/releases/download/${version}/realm-x86_64-apple-darwin.tar.gz"
