@@ -1,52 +1,11 @@
 #! /bin/bash
-
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Font_color_suffix="\033[0m"
 Info="${Green_font_prefix}[信息]${Font_color_suffix}"
 Error="${Red_font_prefix}[错误]${Font_color_suffix}"
 shell_version="1.1.1"
-ct_new_ver="2.12.0" # 2.x 不再跟随官方更新
 gost_conf_path="/etc/gost/config.json"
 raw_conf_path="/etc/gost/rawconf"
-function checknew() {
-  checknew=$(gost -V 2>&1 | awk '{print $2}')
-  # check_new_ver
-  echo "你的gost版本为:""$checknew"""
-  echo -n 是否更新\(y/n\)\:
-  read checknewnum
-  if test $checknewnum = "y"; then
-    cp -r /etc/gost /tmp/
-    Install_ct
-    rm -rf /etc/gost
-    mv /tmp/gost /etc/
-    systemctl restart gost
-  else
-    exit 0
-  fi
-}
-function check_sys() {
-  if [[ -f /etc/redhat-release ]]; then
-    release="centos"
-  elif cat /etc/issue | grep -q -E -i "debian"; then
-    release="debian"
-  elif cat /etc/issue | grep -q -E -i "ubuntu"; then
-    release="ubuntu"
-  elif cat /etc/issue | grep -q -E -i "centos|red hat|redhat"; then
-    release="centos"
-  elif cat /proc/version | grep -q -E -i "debian"; then
-    release="debian"
-  elif cat /proc/version | grep -q -E -i "ubuntu"; then
-    release="ubuntu"
-  elif cat /proc/version | grep -q -E -i "centos|red hat|redhat"; then
-    release="centos"
-  fi
-  bit=$(uname -m)
-  if test "$bit" != "x86_64"; then
-    echo "请输入你的芯片架构，/386/armv5/armv6/armv7/armv8"
-    read bit
-  else
-    bit="amd64"
-  fi
-}
+
 function Installation_dependency() {
   gzip_ver=$(gzip -V)
   if [[ -z ${gzip_ver} ]]; then
@@ -62,16 +21,7 @@ function Installation_dependency() {
 function check_root() {
   [[ $EUID != 0 ]] && echo -e "${Error} 当前非ROOT账号(或没有ROOT权限)，无法继续操作，请更换ROOT账号或使用 ${Green_background_prefix}sudo su${Font_color_suffix} 命令获取临时ROOT权限（执行后可能会提示输入当前账号的密码）。" && exit 1
 }
-function check_new_ver() {
-  # deprecated
-  ct_new_ver=$(wget --no-check-certificate -qO- -t2 -T3 https://githubapi.xinxin.f5.si/repos/ginuerzh/gost/releases/latest | grep "tag_name" | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//g;s/ //g;s/v//g')
-  if [[ -z ${ct_new_ver} ]]; then
-    ct_new_ver="2.11.2"
-    echo -e "${Error} gost 最新版本获取失败，正在下载v${ct_new_ver}版"
-  else
-    echo -e "${Info} gost 目前最新版本为 ${ct_new_ver}"
-  fi
-}
+
 function check_file() {
   if test ! -d "/usr/lib/systemd/system/"; then
     mkdir /usr/lib/systemd/system
@@ -91,32 +41,23 @@ function Install_ct() {
   check_nor_file
   Installation_dependency
   check_file
-  check_sys
-  # check_new_ver
-  echo -e "若为国内机器建议使用大陆镜像加速下载"
-  read -e -p "是否使用？[y/n]:" addyn
-  [[ -z ${addyn} ]] && addyn="n"
-  if [[ ${addyn} == [Yy] ]]; then
-    rm -rf gost-linux-"$bit"-"$ct_new_ver".gz
-    wget --no-check-certificate https://gotunnel.oss-cn-shenzhen.aliyuncs.com/gost-linux-"$bit"-"$ct_new_ver".gz
-    gunzip gost-linux-"$bit"-"$ct_new_ver".gz
-    mv gost-linux-"$bit"-"$ct_new_ver" gost
-    mv gost /usr/bin/gost
-    chmod -R 777 /usr/bin/gost
-    wget --no-check-certificate https://gotunnel.oss-cn-shenzhen.aliyuncs.com/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
-    mkdir /etc/gost && wget --no-check-certificate https://gotunnel.oss-cn-shenzhen.aliyuncs.com/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
-  else
-    rm -rf gost-linux-"$bit"-"$ct_new_ver".gz
-    wget --no-check-certificate https://github.com/ginuerzh/gost/releases/download/v"$ct_new_ver"/gost-linux-"$bit"-"$ct_new_ver".gz
-    gunzip gost-linux-"$bit"-"$ct_new_ver".gz
-    mv gost-linux-"$bit"-"$ct_new_ver" gost
-    mv gost /usr/bin/gost
-    chmod -R 777 /usr/bin/gost
-    wget --no-check-certificate https://raw.githubusercontent.com/KANIKIG/Multi-EasyGost/master/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
-    mkdir /etc/gost && wget --no-check-certificate https://raw.githubusercontent.com/KANIKIG/Multi-EasyGost/master/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
-  fi
+  # 下载和安装 gost
+  rm -rf gost_2.12.0_linux_amd64.tar.gz
+  wget --no-check-certificate https://iii.xinxinran.pp.ua/https://github.com/ginuerzh/gost/releases/download/v2.12.0/gost_2.12.0_linux_amd64.tar.gz
+  gunzip gost_2.12.0_linux_amd64.tar.gz
+  rm -rf README.md README_en.md LICENSE
+  mv gost /usr/bin/gost
+  chmod -R 777 /usr/bin/gost
 
+  # 下载和安装服务文件
+  wget --no-check-certificate https://cdn.kuxueyun.com/script/Multi-EasyGost/gost.service && chmod -R 777 gost.service && mv gost.service /usr/lib/systemd/system
+  
+  # 下载和配置 gost 配置文件
+  mkdir /etc/gost && wget --no-check-certificate https://cdn.kuxueyun.com/script/Multi-EasyGost/config.json && mv config.json /etc/gost && chmod -R 777 /etc/gost
+
+  # 启用并重启 gost 服务
   systemctl enable gost && systemctl restart gost
+
   echo "------------------------------"
   if test -a /usr/bin/gost -a /usr/lib/systemctl/gost.service -a /etc/gost/config.json; then
     echo "gost安装成功"
@@ -131,6 +72,7 @@ function Install_ct() {
     rm -rf "$(pwd)"/gost.sh
   fi
 }
+
 function Uninstall_ct() {
   rm -rf /usr/bin/gost
   rm -rf /usr/lib/systemd/system/gost.service
@@ -895,7 +837,7 @@ update_sh() {
   fi
 }
 
-update_sh
+#update_sh
 echo && echo -e "                 gost 一键安装配置脚本"${Red_font_prefix}[${shell_version}]${Font_color_suffix}"
   ----------- KANIKIG -----------
   特性: (1)本脚本采用systemd及gost配置文件对gost进行管理
@@ -905,41 +847,37 @@ echo && echo -e "                 gost 一键安装配置脚本"${Red_font_prefi
   帮助文档：https://github.com/KANIKIG/Multi-EasyGost
 
  ${Green_font_prefix}1.${Font_color_suffix} 安装 gost
- ${Green_font_prefix}2.${Font_color_suffix} 更新 gost
- ${Green_font_prefix}3.${Font_color_suffix} 卸载 gost
+ ${Green_font_prefix}2.${Font_color_suffix} 卸载 gost
 ————————————
- ${Green_font_prefix}4.${Font_color_suffix} 启动 gost
- ${Green_font_prefix}5.${Font_color_suffix} 停止 gost
- ${Green_font_prefix}6.${Font_color_suffix} 重启 gost
+ ${Green_font_prefix}3.${Font_color_suffix} 启动 gost
+ ${Green_font_prefix}4.${Font_color_suffix} 停止 gost
+ ${Green_font_prefix}5.${Font_color_suffix} 重启 gost
 ————————————
- ${Green_font_prefix}7.${Font_color_suffix} 新增gost转发配置
- ${Green_font_prefix}8.${Font_color_suffix} 查看现有gost配置
- ${Green_font_prefix}9.${Font_color_suffix} 删除一则gost配置
+ ${Green_font_prefix}6.${Font_color_suffix} 新增gost转发配置
+ ${Green_font_prefix}7.${Font_color_suffix} 查看现有gost配置
+ ${Green_font_prefix}8.${Font_color_suffix} 删除一则gost配置
 ————————————
- ${Green_font_prefix}10.${Font_color_suffix} gost定时重启配置
- ${Green_font_prefix}11.${Font_color_suffix} 自定义TLS证书配置
+ ${Green_font_prefix}9.${Font_color_suffix} gost定时重启配置
+ ${Green_font_prefix}10.${Font_color_suffix} 自定义TLS证书配置
 ————————————" && echo
-read -e -p " 请输入数字 [1-9]:" num
+read -e -p " 请输入数字 [1-10]:" num
 case "$num" in
 1)
   Install_ct
   ;;
 2)
-  checknew
-  ;;
-3)
   Uninstall_ct
   ;;
-4)
+3)
   Start_ct
   ;;
-5)
+4)
   Stop_ct
   ;;
-6)
+5)
   Restart_ct
   ;;
-7)
+6)
   rawconf
   rm -rf /etc/gost/config.json
   confstart
@@ -950,10 +888,10 @@ case "$num" in
   echo -e "--------------------------------------------------------"
   show_all_conf
   ;;
-8)
+7)
   show_all_conf
   ;;
-9)
+8)
   show_all_conf
   read -p "请输入你要删除的配置编号：" numdelete
   if echo $numdelete | grep -q '[0-9]'; then
@@ -968,13 +906,13 @@ case "$num" in
     echo "请输入正确数字"
   fi
   ;;
-10)
+9)
   cron_restart
   ;;
-11)
+10)
   cert
   ;;
 *)
-  echo "请输入正确数字 [1-9]"
+  echo "请输入正确数字 [1-10]"
   ;;
 esac
