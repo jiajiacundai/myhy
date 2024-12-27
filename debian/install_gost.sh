@@ -68,7 +68,7 @@ install_gost() {
 
     # Download the binary
     echo "Downloading gost version $version..."
-    curl -fsSL -o gost.tar.gz $download_url
+    curl -fsSL -o gost.tar.gz "https://iii.xinxinran.pp.ua/$download_url"
 
     # Extract and install the binary
     echo "Installing gost..."
