@@ -10,7 +10,7 @@ fi
 
 # Set the desired GitHub repository
 repo="go-gost/gost"
-base_url="https://api.github.com/repos/$repo/releases"
+base_url="https://githubapi.xinxin.f5.si/repos/$repo/releases"
 
 # Function to download and install gost
 install_gost() {
@@ -64,6 +64,7 @@ install_gost() {
     esac
     get_download_url="$base_url/tags/$version"
     download_url=$(curl -s "$get_download_url" | grep -Eo "\"browser_download_url\": \".*${os}.*${cpu_arch}.*\"" | awk -F'["]' '{print $4}')
+    echo "下载链接: $download_url"
 
     # Download the binary
     echo "Downloading gost version $version..."
