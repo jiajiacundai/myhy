@@ -19,3 +19,7 @@ curl -s https://raw.githubusercontent.com/jiajiacundai/myhy/main/debian/addswap.
 ```shell
 curl -s https://iii.sanguoguoguo.us.kg/https://raw.githubusercontent.com/jiajiacundai/myhy/main/unbantu/disable_updates.sh | bash
 ```
+# gost一键脚本
+```shell
+wget -qO gost.sh https://iii.sanguoguoguo.us.kg/https://raw.githubusercontent.com/jiajiacundai/myhy/refs/heads/main/gost/gost.sh && bash gost.sh
+```
