@@ -44,7 +44,7 @@ function Install_ct() {
   # 下载和安装 gost
   rm -rf gost_2.12.0_linux_amd64.tar.gz
   wget --no-check-certificate https://iii.xinxinran.pp.ua/https://github.com/ginuerzh/gost/releases/download/v2.12.0/gost_2.12.0_linux_amd64.tar.gz
-  gunzip gost_2.12.0_linux_amd64.tar.gz
+  tar -xvf gost_2.12.0_linux_amd64.tar
   rm -rf README.md README_en.md LICENSE
   mv gost /usr/bin/gost
   chmod -R 777 /usr/bin/gost
