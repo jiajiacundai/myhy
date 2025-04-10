@@ -52,6 +52,7 @@ sudo update-grub
 echo "# 查看已安装的内核"
 dpkg --get-selections | grep linux
 echo "# 开始卸载内核，注：完全卸载4.1内核选NO"
+read -p "按回车键继续..."  # 等待用户按回车
 for kernel in $(dpkg --get-selections | grep -E 'linux-image-4\.19\..*-cloud-amd64' | awk '{print $1}'); do
     echo "卸载内核: $kernel"
     sudo apt remove --purge -y $kernel
