@@ -124,5 +124,8 @@ else
     echo "Could not determine Debian version."
 fi
 
+# 添加开机自动加载tun
+echo "tun" | sudo tee -a /etc/modules
+
 # 重启
 reboot
