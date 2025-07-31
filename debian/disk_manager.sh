@@ -196,7 +196,8 @@ mount_disk() {
         read format_confirm
         if [[ "$format_confirm" =~ ^[Yy]$ ]]; then
             echo "正在格式化为ext4..."
-            mkfs.ext4 "$selected_partition"
+            # 格式化分区保留默认空间为5%，下面设置保留空间为2%
+            mkfs.ext4 -m 2 "$selected_partition"
             if [ $? -ne 0 ]; then
                 echo -e "${RED}格式化失败${NC}"
                 return
