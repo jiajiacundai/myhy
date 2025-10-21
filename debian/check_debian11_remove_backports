@@ -1,0 +1,18 @@
+#!/bin/bash
+# 检查系统版本并在 Debian 11 下删除 backports.list
+
+# 获取系统版本信息
+VERSION_CODENAME=$(grep -oP '(?<=VERSION_CODENAME=).*' /etc/os-release 2>/dev/null)
+
+if [ "$VERSION_CODENAME" = "bullseye" ]; then
+    FILE="/etc/apt/sources.list.d/backports.list"
+    if [ -f "$FILE" ]; then
+        echo "检测到 Debian 11 (bullseye)，正在删除 $FILE..."
+        rm -rf "$FILE"
+        echo "删除完成。"
+    else
+        echo "文件 $FILE 不存在，无需删除。"
+    fi
+else
+    echo "系统不是 Debian 11，未作任何更改。"
+fi
