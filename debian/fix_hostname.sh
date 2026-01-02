@@ -20,7 +20,13 @@ fi
 echo "Hostname $current_hostname not found in /etc/hosts. Updating configuration..."
 
 # 更新 /etc/hosts 文件
-sed -i "/127.0.1.1/c\127.0.1.1       $current_hostname.example.com $current_hostname" /etc/hosts
+# sed -i "/127.0.1.1/c\127.0.1.1       $current_hostname.example.com $current_hostname" /etc/hosts
+# 如果有 127.0.1.1 就替换，没有就追加
+if grep -q "^127\.0\.1\.1" /etc/hosts; then
+  sed -i "s/^127\.0\.1\.1.*/127.0.1.1 $current_hostname/" /etc/hosts
+else
+  echo "127.0.1.1 $current_hostname" >> /etc/hosts
+fi
 
 # 确保 /etc/hostname 文件包含正确的主机名
 echo "$current_hostname" > /etc/hostname
