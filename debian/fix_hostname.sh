@@ -11,7 +11,11 @@ fi
 current_hostname=$(hostname)
 
 # 检查主机名是否已经在 /etc/hosts 文件中
-if grep -q "$current_hostname" /etc/hosts; then
+# if grep -q "$current_hostname" /etc/hosts; then
+#     echo "Hostname $current_hostname already exists in /etc/hosts. No changes needed."
+#     exit 0
+# fi
+if grep -Eq "(^|[[:space:]])${current_hostname}([[:space:]]|$)" /etc/hosts; then
     echo "Hostname $current_hostname already exists in /etc/hosts. No changes needed."
     exit 0
 fi
