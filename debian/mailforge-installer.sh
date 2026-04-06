@@ -28,15 +28,175 @@ command_exists() {
 }
 
 pause() {
-  if [[ -t 0 && -t 1 ]]; then
-    read -r -e -p "按回车继续..." _
+  if interactive_tty_available; then
+    prompt_with_default "按回车继续" "" >/dev/null || true
   else
     read -r -p "按回车继续..." _
   fi
 }
 
-readline_available() {
-  [[ -t 0 && -t 1 ]]
+interactive_tty_available() {
+  [[ -t 0 && -r /dev/tty && -w /dev/tty ]]
+}
+
+mask_prompt_value() {
+  local value="$1"
+  local length="${#value}"
+  if [[ "${length}" -le 0 ]]; then
+    printf ''
+    return 0
+  fi
+  printf '%*s' "${length}" '' | tr ' ' '*'
+}
+
+redraw_editable_prompt() {
+  local prompt="$1"
+  local value="$2"
+  local cursor="$3"
+  local secret="${4:-0}"
+  local rendered="${value}"
+
+  if [[ "${secret}" == "1" ]]; then
+    rendered="$(mask_prompt_value "${value}")"
+  fi
+
+  printf '\r\033[0K%s%s' "${prompt}" "${rendered}" > /dev/tty
+  if (( ${#rendered} > cursor )); then
+    printf '\033[%dD' "$(( ${#rendered} - cursor ))" > /dev/tty
+  fi
+}
+
+editable_input() {
+  local prompt="$1"
+  local default_value="${2:-}"
+  local secret="${3:-0}"
+  local value="${default_value}"
+  local cursor="${#value}"
+  local old_stty=""
+  local key=""
+  local seq1=""
+  local seq2=""
+
+  if ! interactive_tty_available; then
+    if [[ "${secret}" == "1" ]]; then
+      if [[ -n "${default_value}" ]]; then
+        read -r -s -p "${prompt}" value
+        printf '\n' >&2
+        printf '%s' "${value:-$default_value}"
+      else
+        read -r -s -p "${prompt}" value
+        printf '\n' >&2
+        printf '%s' "${value}"
+      fi
+    else
+      if [[ -n "${default_value}" ]]; then
+        read -r -p "${prompt}" value
+        printf '%s' "${value:-$default_value}"
+      else
+        read -r -p "${prompt}" value
+        printf '%s' "${value}"
+      fi
+    fi
+    return 0
+  fi
+
+  old_stty="$(stty -g)"
+  stty -echo -icanon min 1 time 0
+  redraw_editable_prompt "${prompt}" "${value}" "${cursor}" "${secret}"
+
+  while true; do
+    IFS= read -r -s -n 1 key
+    case "${key}" in
+      $'\r'|$'\n')
+        printf '\r\033[0K%s' "${prompt}" > /dev/tty
+        if [[ "${secret}" == "1" ]]; then
+          printf '%s\n' "$(mask_prompt_value "${value}")" > /dev/tty
+        else
+          printf '%s\n' "${value}" > /dev/tty
+        fi
+        stty "${old_stty}"
+        printf '%s' "${value}"
+        return 0
+        ;;
+      $'\003')
+        stty "${old_stty}"
+        printf '^C\n' > /dev/tty
+        return 130
+        ;;
+      $'\177'|$'\010')
+        if (( cursor > 0 )); then
+          value="${value:0:cursor-1}${value:cursor}"
+          ((cursor--))
+        fi
+        ;;
+      $'\001')
+        cursor=0
+        ;;
+      $'\005')
+        cursor="${#value}"
+        ;;
+      $'\004')
+        if (( cursor < ${#value} )); then
+          value="${value:0:cursor}${value:cursor+1}"
+        fi
+        ;;
+      $'\033')
+        IFS= read -r -s -n 1 -t 0.05 seq1 || {
+          redraw_editable_prompt "${prompt}" "${value}" "${cursor}" "${secret}"
+          continue
+        }
+        if [[ "${seq1}" == "[" ]]; then
+          IFS= read -r -s -n 1 -t 0.05 seq2 || {
+            redraw_editable_prompt "${prompt}" "${value}" "${cursor}" "${secret}"
+            continue
+          }
+          case "${seq2}" in
+            D)
+              if (( cursor > 0 )); then
+                ((cursor--))
+              fi
+              ;;
+            C)
+              if (( cursor < ${#value} )); then
+                ((cursor++))
+              fi
+              ;;
+            H)
+              cursor=0
+              ;;
+            F)
+              cursor="${#value}"
+              ;;
+            3)
+              IFS= read -r -s -n 1 -t 0.05 seq1 || true
+              if [[ "${seq1}" == "~" ]] && (( cursor < ${#value} )); then
+                value="${value:0:cursor}${value:cursor+1}"
+              fi
+              ;;
+            1|7)
+              IFS= read -r -s -n 1 -t 0.05 seq1 || true
+              if [[ "${seq1}" == "~" ]]; then
+                cursor=0
+              fi
+              ;;
+            4|8)
+              IFS= read -r -s -n 1 -t 0.05 seq1 || true
+              if [[ "${seq1}" == "~" ]]; then
+                cursor="${#value}"
+              fi
+              ;;
+          esac
+        fi
+        ;;
+      *)
+        if [[ "${key}" =~ [[:print:][:space:]] ]] && [[ "${key}" != $'\t' ]]; then
+          value="${value:0:cursor}${key}${value:cursor}"
+          ((cursor++))
+        fi
+        ;;
+    esac
+    redraw_editable_prompt "${prompt}" "${value}" "${cursor}" "${secret}"
+  done
 }
 
 require_root() {
@@ -148,50 +308,13 @@ trim() {
 prompt_with_default() {
   local label="$1"
   local default_value="$2"
-  local value
-
-  if readline_available; then
-    if [[ -n "${default_value}" ]]; then
-      read -r -e -i "${default_value}" -p "${label}: " value
-    else
-      read -r -e -p "${label}: " value
-    fi
-    printf '%s' "${value}"
-  else
-    if [[ -n "${default_value}" ]]; then
-      read -r -p "${label} [${default_value}]: " value
-      printf '%s' "${value:-$default_value}"
-    else
-      read -r -p "${label}: " value
-      printf '%s' "${value}"
-    fi
-  fi
+  editable_input "${label}: " "${default_value}" "0"
 }
 
 prompt_secret_with_default() {
   local label="$1"
   local default_value="${2:-}"
-  local value
-
-  if readline_available; then
-    if [[ -n "${default_value}" ]]; then
-      read -r -s -e -i "${default_value}" -p "${label}: " value
-    else
-      read -r -s -e -p "${label}: " value
-    fi
-    printf '\n' >&2
-    printf '%s' "${value}"
-  else
-    if [[ -n "${default_value}" ]]; then
-      read -r -s -p "${label} [保留现有值请直接回车]: " value
-      printf '\n' >&2
-      printf '%s' "${value:-$default_value}"
-    else
-      read -r -s -p "${label}: " value
-      printf '\n' >&2
-      printf '%s' "${value}"
-    fi
-  fi
+  editable_input "${label}: " "${default_value}" "1"
 }
 
 confirm() {
@@ -204,11 +327,7 @@ confirm() {
     suffix="[Y/n]"
   fi
 
-  if readline_available; then
-    read -r -e -i "${default_answer}" -p "${prompt} ${suffix}: " answer
-  else
-    read -r -p "${prompt} ${suffix}: " answer
-  fi
+  answer="$(editable_input "${prompt} ${suffix}: " "${default_answer}" "0")" || return $?
   answer="$(trim "${answer}")"
   if [[ -z "${answer}" ]]; then
     answer="${default_answer}"
@@ -603,7 +722,7 @@ derive_public_base_url_default() {
   local http_addr="$1"
   local port
   port="$(extract_port "${http_addr}")"
-  [[ -n "${port}" ]] || port="8080"
+  [[ -n "${port}" ]] || port="18080"
 
   if [[ -n "${DETECTED_IPV6}" ]]; then
     printf 'http://[%s]:%s' "${DETECTED_IPV6}" "${port}"
@@ -944,7 +1063,7 @@ install_mailforge() {
 
   if [[ "${skip_config}" -eq 0 ]]; then
     smtp_addr="${DETECTED_SMTP_ADDR}"
-    http_addr="$(prompt_with_default "请输入 MAILFORGE_HTTP_ADDR（Web 监听地址）" ":8080")"
+    http_addr="$(prompt_with_default "请输入 MAILFORGE_HTTP_ADDR（Web 监听地址）" ":18080")"
     db_path="$(prompt_with_default "请输入 MAILFORGE_DB_PATH（数据库路径）" "${DATA_DIR}/mailforge.db")"
 
     while true; do
@@ -1025,7 +1144,7 @@ install_mailforge() {
   if [[ -z "${http_addr}" ]]; then
     http_addr="$(read_existing_http_addr || true)"
   fi
-  health_url="$(derive_local_health_url "${http_addr:-:8080}" || true)"
+  health_url="$(derive_local_health_url "${http_addr:-:18080}" || true)"
   if [[ -n "${health_url}" ]]; then
     if wait_for_health "${health_url}"; then
       log "健康检查通过: ${health_url}"
@@ -1045,7 +1164,7 @@ manage_mailforge() {
     echo "3. 查看mailforge状态"
     echo "0. 返回上一级"
     echo
-    read -r -p "请选择: " choice
+    choice="$(prompt_with_default "请选择" "")" || return $?
     case "${choice}" in
       1)
         systemctl stop "${SERVICE_NAME}"
@@ -1100,7 +1219,7 @@ main_menu() {
     echo "3. 卸载mailforge"
     echo "0. 退出"
     echo
-    read -r -p "请选择: " choice
+    choice="$(prompt_with_default "请选择" "")" || exit $?
     case "${choice}" in
       1)
         install_mailforge
