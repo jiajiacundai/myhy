@@ -364,7 +364,8 @@ finally:
         pass
 PY
 
-  printf '%s' "$!"
+  TEMP_SMTP_PROBE_PID="$!"
+  printf '%s' "${TEMP_SMTP_PROBE_PID}"
 }
 
 wait_for_probe_server_ready() {
@@ -419,6 +420,40 @@ port_check_result_is_open() {
   [[ "$1" == *'"result":"open"'* ]]
 }
 
+check_public_smtp_handshake() {
+  local family="$1"
+  local ip="$2"
+  local python_bin
+  python_bin="$(detect_python)"
+  [[ -n "${python_bin}" ]] || return 1
+
+  "${python_bin}" - "${family}" "${ip}" <<'PY'
+import socket
+import sys
+
+family = socket.AF_INET if sys.argv[1] == "4" else socket.AF_INET6
+host = sys.argv[2]
+address = (host, 25) if family == socket.AF_INET else (host, 25, 0, 0)
+sock = socket.socket(family, socket.SOCK_STREAM)
+sock.settimeout(6)
+
+try:
+    sock.connect(address)
+    banner = sock.recv(1024)
+    if not banner.startswith(b"220"):
+        sys.exit(1)
+
+    sock.sendall(b"EHLO mailforge-installer.local\r\n")
+    response = sock.recv(1024)
+    if not response.startswith(b"250"):
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+}
+
 probe_public_smtp() {
   local family="$1"
   local ip="$2"
@@ -429,6 +464,8 @@ probe_public_smtp() {
   local result_json=""
   local state=""
   local attempt
+  local external_probe_ok=0
+  local local_handshake_ok=0
 
   is_public_routable_ip "${family}" "${ip}" || return 1
 
@@ -439,7 +476,12 @@ probe_public_smtp() {
     bind_ip="::"
   fi
 
-  pid="$(start_temporary_smtp_probe_server "${family}" "${bind_ip}" "${state_file}")" || {
+  start_temporary_smtp_probe_server "${family}" "${bind_ip}" "${state_file}" >/dev/null || {
+    rm -rf "${probe_dir}"
+    return 1
+  }
+  pid="${TEMP_SMTP_PROBE_PID:-}"
+  [[ -n "${pid}" ]] || {
     rm -rf "${probe_dir}"
     return 1
   }
@@ -452,27 +494,65 @@ probe_public_smtp() {
 
   result_json="$(request_myip_casa_port_check "${ip}" || true)"
   if port_check_result_is_open "${result_json}"; then
-    for attempt in $(seq 1 8); do
-      state="$(cat "${state_file}" 2>/dev/null || true)"
-      if [[ "${state}" == CONNECTED:* ]]; then
+    external_probe_ok=1
+  fi
+
+  if [[ "${family}" == "6" ]] && check_public_smtp_handshake 6 "${ip}"; then
+    local_handshake_ok=1
+  fi
+
+  for attempt in $(seq 1 10); do
+    state="$(cat "${state_file}" 2>/dev/null || true)"
+    if [[ "${state}" == CONNECTED:* ]]; then
+      if [[ "${family}" == "4" ]] && [[ "${external_probe_ok}" -eq 1 ]]; then
         stop_temporary_smtp_probe_server "${pid}"
         rm -rf "${probe_dir}"
         return 0
       fi
-      sleep 1
-    done
+      if [[ "${family}" == "6" ]] && { [[ "${external_probe_ok}" -eq 1 ]] || [[ "${local_handshake_ok}" -eq 1 ]]; }; then
+        stop_temporary_smtp_probe_server "${pid}"
+        rm -rf "${probe_dir}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  if [[ "${external_probe_ok}" -eq 0 ]]; then
+    result_json="$(request_myip_casa_port_check "${ip}" || true)"
+    if port_check_result_is_open "${result_json}"; then
+      external_probe_ok=1
+    fi
+  fi
+  if [[ "${family}" == "6" ]] && [[ "${local_handshake_ok}" -eq 0 ]] && check_public_smtp_handshake 6 "${ip}"; then
+    local_handshake_ok=1
   fi
 
-  for attempt in $(seq 1 1); do
-    sleep 2
-    result_json="$(request_myip_casa_port_check "${ip}" || true)"
+  for attempt in $(seq 1 3); do
     state="$(cat "${state_file}" 2>/dev/null || true)"
-    if port_check_result_is_open "${result_json}" && [[ "${state}" == CONNECTED:* ]]; then
+    if [[ "${state}" == CONNECTED:* ]]; then
+      if [[ "${family}" == "4" ]] && [[ "${external_probe_ok}" -eq 1 ]]; then
+        stop_temporary_smtp_probe_server "${pid}"
+        rm -rf "${probe_dir}"
+        return 0
+      fi
+      if [[ "${family}" == "6" ]] && { [[ "${external_probe_ok}" -eq 1 ]] || [[ "${local_handshake_ok}" -eq 1 ]]; }; then
+        stop_temporary_smtp_probe_server "${pid}"
+        rm -rf "${probe_dir}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  if [[ "${family}" == "6" ]] && [[ "${local_handshake_ok}" -eq 1 ]]; then
+    state="$(cat "${state_file}" 2>/dev/null || true)"
+    if [[ "${state}" == CONNECTED:* ]]; then
       stop_temporary_smtp_probe_server "${pid}"
       rm -rf "${probe_dir}"
       return 0
     fi
-  done
+  fi
 
   stop_temporary_smtp_probe_server "${pid}"
   rm -rf "${probe_dir}"
