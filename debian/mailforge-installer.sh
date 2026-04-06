@@ -28,7 +28,15 @@ command_exists() {
 }
 
 pause() {
-  read -r -p "按回车继续..." _
+  if [[ -t 0 && -t 1 ]]; then
+    read -r -e -p "按回车继续..." _
+  else
+    read -r -p "按回车继续..." _
+  fi
+}
+
+readline_available() {
+  [[ -t 0 && -t 1 ]]
 }
 
 require_root() {
@@ -141,12 +149,22 @@ prompt_with_default() {
   local label="$1"
   local default_value="$2"
   local value
-  if [[ -n "${default_value}" ]]; then
-    read -r -p "${label} [${default_value}]: " value
-    printf '%s' "${value:-$default_value}"
-  else
-    read -r -p "${label}: " value
+
+  if readline_available; then
+    if [[ -n "${default_value}" ]]; then
+      read -r -e -i "${default_value}" -p "${label}: " value
+    else
+      read -r -e -p "${label}: " value
+    fi
     printf '%s' "${value}"
+  else
+    if [[ -n "${default_value}" ]]; then
+      read -r -p "${label} [${default_value}]: " value
+      printf '%s' "${value:-$default_value}"
+    else
+      read -r -p "${label}: " value
+      printf '%s' "${value}"
+    fi
   fi
 }
 
@@ -154,14 +172,25 @@ prompt_secret_with_default() {
   local label="$1"
   local default_value="${2:-}"
   local value
-  if [[ -n "${default_value}" ]]; then
-    read -r -s -p "${label} [保留现有值请直接回车]: " value
-    printf '\n' >&2
-    printf '%s' "${value:-$default_value}"
-  else
-    read -r -s -p "${label}: " value
+
+  if readline_available; then
+    if [[ -n "${default_value}" ]]; then
+      read -r -s -e -i "${default_value}" -p "${label}: " value
+    else
+      read -r -s -e -p "${label}: " value
+    fi
     printf '\n' >&2
     printf '%s' "${value}"
+  else
+    if [[ -n "${default_value}" ]]; then
+      read -r -s -p "${label} [保留现有值请直接回车]: " value
+      printf '\n' >&2
+      printf '%s' "${value:-$default_value}"
+    else
+      read -r -s -p "${label}: " value
+      printf '\n' >&2
+      printf '%s' "${value}"
+    fi
   fi
 }
 
@@ -175,7 +204,11 @@ confirm() {
     suffix="[Y/n]"
   fi
 
-  read -r -p "${prompt} ${suffix}: " answer
+  if readline_available; then
+    read -r -e -i "${default_answer}" -p "${prompt} ${suffix}: " answer
+  else
+    read -r -p "${prompt} ${suffix}: " answer
+  fi
   answer="$(trim "${answer}")"
   if [[ -z "${answer}" ]]; then
     answer="${default_answer}"
