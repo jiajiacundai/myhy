@@ -82,19 +82,19 @@ editable_input() {
       if [[ -n "${default_value}" ]]; then
         read -r -s -p "${prompt}" value
         printf '\n' >&2
-        printf '%s' "${value:-$default_value}"
+        PROMPT_RESULT="${value:-$default_value}"
       else
         read -r -s -p "${prompt}" value
         printf '\n' >&2
-        printf '%s' "${value}"
+        PROMPT_RESULT="${value}"
       fi
     else
       if [[ -n "${default_value}" ]]; then
         read -r -p "${prompt}" value
-        printf '%s' "${value:-$default_value}"
+        PROMPT_RESULT="${value:-$default_value}"
       else
         read -r -p "${prompt}" value
-        printf '%s' "${value}"
+        PROMPT_RESULT="${value}"
       fi
     fi
     return 0
@@ -105,7 +105,13 @@ editable_input() {
   redraw_editable_prompt "${prompt}" "${value}" "${cursor}" "${secret}"
 
   while true; do
-    IFS= read -r -s -n 1 key
+    if ! IFS= read -r -s -n 1 key; then
+      stty "${old_stty}"
+      return 1
+    fi
+    if [[ -z "${key}" ]]; then
+      key=$'\n'
+    fi
     case "${key}" in
       $'\r'|$'\n')
         printf '\r\033[0K%s' "${prompt}" > /dev/tty
@@ -115,7 +121,7 @@ editable_input() {
           printf '%s\n' "${value}" > /dev/tty
         fi
         stty "${old_stty}"
-        printf '%s' "${value}"
+        PROMPT_RESULT="${value}"
         return 0
         ;;
       $'\003')
@@ -126,7 +132,7 @@ editable_input() {
       $'\177'|$'\010')
         if (( cursor > 0 )); then
           value="${value:0:cursor-1}${value:cursor}"
-          ((cursor--))
+          cursor=$((cursor - 1))
         fi
         ;;
       $'\001')
@@ -153,12 +159,12 @@ editable_input() {
           case "${seq2}" in
             D)
               if (( cursor > 0 )); then
-                ((cursor--))
+                cursor=$((cursor - 1))
               fi
               ;;
             C)
               if (( cursor < ${#value} )); then
-                ((cursor++))
+                cursor=$((cursor + 1))
               fi
               ;;
             H)
@@ -191,7 +197,7 @@ editable_input() {
       *)
         if [[ "${key}" =~ [[:print:][:space:]] ]] && [[ "${key}" != $'\t' ]]; then
           value="${value:0:cursor}${key}${value:cursor}"
-          ((cursor++))
+          cursor=$((cursor + 1))
         fi
         ;;
     esac
@@ -327,7 +333,8 @@ confirm() {
     suffix="[Y/n]"
   fi
 
-  answer="$(editable_input "${prompt} ${suffix}: " "${default_answer}" "0")" || return $?
+  editable_input "${prompt} ${suffix}: " "${default_answer}" "0" || return $?
+  answer="${PROMPT_RESULT}"
   answer="$(trim "${answer}")"
   if [[ -z "${answer}" ]]; then
     answer="${default_answer}"
@@ -945,9 +952,14 @@ detect_mail_capability() {
   DETECTED_IPV6=""
   DETECTED_SMTP_ADDR=""
 
+  log "开始探测公网 IPv4/IPv6 的 SMTP 可达性，这一步可能需要 1 到 3 分钟。"
+  log "正在获取公网 IPv4/IPv6 地址。"
   raw_ipv4="$(fetch_public_ip 4 || true)"
   raw_ipv6="$(fetch_public_ip 6 || true)"
 
+  if [[ -n "${raw_ipv4}" ]]; then
+    log "正在检测 IPv4 ${raw_ipv4} 的公网 25 端口邮件可达性。"
+  fi
   if [[ -n "${raw_ipv4}" ]] && probe_public_smtp 4 "${raw_ipv4}"; then
     DETECTED_IPV4="${raw_ipv4}"
     ipv4_ok=1
@@ -958,6 +970,9 @@ detect_mail_capability() {
     log "未检测到可用的 IPv4 公网地址，默认留空。"
   fi
 
+  if [[ -n "${raw_ipv6}" ]]; then
+    log "正在检测 IPv6 ${raw_ipv6} 的公网 25 端口邮件可达性。"
+  fi
   if [[ -n "${raw_ipv6}" ]] && probe_public_smtp 6 "${raw_ipv6}"; then
     DETECTED_IPV6="${raw_ipv6}"
     ipv6_ok=1
@@ -1006,7 +1021,11 @@ prepare_runtime_for_install() {
     fi
   fi
 
-  legacy_processes="$(pgrep -af 'mailforge' | grep -v 'mailforge-installer.sh' || true)"
+  legacy_processes="$(
+    pgrep -af 'mailforge' | awk -v self="$$" -v parent="${PPID:-0}" '
+      $1 != self && $1 != parent && $0 !~ /mailforge-installer/ { print }
+    ' || true
+  )"
   if [[ -n "${legacy_processes}" ]]; then
     warn "检测到旧的 mailforge 进程，准备清理旧部署："
     printf '%s\n' "${legacy_processes}"
@@ -1049,6 +1068,7 @@ install_mailforge() {
   local relay_starttls=""
   local health_url=""
 
+  log "已进入安装流程，正在检查依赖并准备探测公网 SMTP 能力。"
   install_curl
   install_python_for_probe
   prepare_runtime_for_install
@@ -1063,11 +1083,14 @@ install_mailforge() {
 
   if [[ "${skip_config}" -eq 0 ]]; then
     smtp_addr="${DETECTED_SMTP_ADDR}"
-    http_addr="$(prompt_with_default "请输入 MAILFORGE_HTTP_ADDR（Web 监听地址）" ":18080")"
-    db_path="$(prompt_with_default "请输入 MAILFORGE_DB_PATH（数据库路径）" "${DATA_DIR}/mailforge.db")"
+    prompt_with_default "请输入 MAILFORGE_HTTP_ADDR（Web 监听地址）" ":18080" || return $?
+    http_addr="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_DB_PATH（数据库路径）" "${DATA_DIR}/mailforge.db" || return $?
+    db_path="${PROMPT_RESULT}"
 
     while true; do
-      allowed_domains="$(prompt_with_default "请输入 MAILFORGE_ALLOWED_DOMAINS（多个域名用逗号分隔）" "")"
+      prompt_with_default "请输入 MAILFORGE_ALLOWED_DOMAINS（多个域名用逗号分隔）" "" || return $?
+      allowed_domains="${PROMPT_RESULT}"
       allowed_domains="$(trim "${allowed_domains}")"
       if [[ -n "${allowed_domains}" ]]; then
         break
@@ -1076,30 +1099,50 @@ install_mailforge() {
     done
 
     default_domain="$(first_domain_from_csv "${allowed_domains}" || true)"
-    default_domain="$(prompt_with_default "请输入 MAILFORGE_DEFAULT_DOMAIN（默认域名）" "${default_domain}")"
-    allow_subdomains="$(prompt_with_default "请输入 MAILFORGE_ALLOW_SUBDOMAINS（true/false）" "true")"
-    random_length="$(prompt_with_default "请输入 MAILFORGE_RANDOM_LENGTH（随机邮箱长度）" "10")"
+    prompt_with_default "请输入 MAILFORGE_DEFAULT_DOMAIN（默认域名）" "${default_domain}" || return $?
+    default_domain="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_ALLOW_SUBDOMAINS（true/false）" "true" || return $?
+    allow_subdomains="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_RANDOM_LENGTH（随机邮箱长度）" "10" || return $?
+    random_length="${PROMPT_RESULT}"
 
-    public_base_url="$(prompt_with_default "请输入 MAILFORGE_PUBLIC_BASE_URL（对外访问地址）" "$(derive_public_base_url_default "${http_addr}")")"
-    public_ipv4="$(prompt_with_default "请输入 MAILFORGE_PUBLIC_IPV4（留空表示不写入）" "${DETECTED_IPV4}")"
-    public_ipv6="$(prompt_with_default "请输入 MAILFORGE_PUBLIC_IPV6（留空表示不写入）" "${DETECTED_IPV6}")"
-    public_mail_host="$(prompt_with_default "请输入 MAILFORGE_PUBLIC_MAIL_HOST（留空默认 mail.<domain>）" "mail.${default_domain}")"
+    prompt_with_default "请输入 MAILFORGE_PUBLIC_BASE_URL（对外访问地址）" "$(derive_public_base_url_default "${http_addr}")" || return $?
+    public_base_url="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_PUBLIC_IPV4（留空表示不写入）" "${DETECTED_IPV4}" || return $?
+    public_ipv4="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_PUBLIC_IPV6（留空表示不写入）" "${DETECTED_IPV6}" || return $?
+    public_ipv6="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_PUBLIC_MAIL_HOST（留空默认 mail.<domain>）" "mail.${default_domain}" || return $?
+    public_mail_host="${PROMPT_RESULT}"
 
-    dns_url="$(prompt_with_default "请输入 MAILFORGE_DNS_MANAGER_URL（Cloudflare 管理后台地址）" "")"
-    dns_password="$(prompt_secret_with_default "请输入 MAILFORGE_DNS_MANAGER_PASSWORD（Cloudflare 管理后台密码）")"
-    dns_account_index="$(prompt_with_default "请输入 MAILFORGE_DNS_MANAGER_ACCOUNT_INDEX（0 为自动遍历）" "0")"
-    dns_auto_ensure="$(prompt_with_default "请输入 MAILFORGE_DNS_AUTO_ENSURE（true/false）" "true")"
+    prompt_with_default "请输入 MAILFORGE_DNS_MANAGER_URL（Cloudflare 管理后台地址）" "" || return $?
+    dns_url="${PROMPT_RESULT}"
+    prompt_secret_with_default "请输入 MAILFORGE_DNS_MANAGER_PASSWORD（Cloudflare 管理后台密码）" || return $?
+    dns_password="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_DNS_MANAGER_ACCOUNT_INDEX（0 为自动遍历）" "0" || return $?
+    dns_account_index="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_DNS_AUTO_ENSURE（true/false）" "true" || return $?
+    dns_auto_ensure="${PROMPT_RESULT}"
 
-    web_username="$(prompt_with_default "请输入 MAILFORGE_WEB_USERNAME（后台用户名）" "")"
-    web_password="$(prompt_secret_with_default "请输入 MAILFORGE_WEB_PASSWORD（后台密码）")"
-    web_session_secret="$(prompt_secret_with_default "请输入 MAILFORGE_WEB_SESSION_SECRET（留空自动生成）" "")"
+    prompt_with_default "请输入 MAILFORGE_WEB_USERNAME（后台用户名）" "" || return $?
+    web_username="${PROMPT_RESULT}"
+    prompt_secret_with_default "请输入 MAILFORGE_WEB_PASSWORD（后台密码）" || return $?
+    web_password="${PROMPT_RESULT}"
+    prompt_secret_with_default "请输入 MAILFORGE_WEB_SESSION_SECRET（留空自动生成）" "" || return $?
+    web_session_secret="${PROMPT_RESULT}"
 
-    relay_host="$(prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_HOST（留空表示不使用 relay）" "")"
-    relay_port="$(prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_PORT" "587")"
-    relay_username="$(prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_USERNAME" "")"
-    relay_password="$(prompt_secret_with_default "请输入 MAILFORGE_SMTP_RELAY_PASSWORD" "")"
-    relay_from="$(prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_FROM（留空跟随发件人）" "")"
-    relay_starttls="$(prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_STARTTLS（true/false）" "true")"
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_HOST（留空表示不使用 relay）" "" || return $?
+    relay_host="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_PORT" "587" || return $?
+    relay_port="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_USERNAME" "" || return $?
+    relay_username="${PROMPT_RESULT}"
+    prompt_secret_with_default "请输入 MAILFORGE_SMTP_RELAY_PASSWORD" "" || return $?
+    relay_password="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_FROM（留空跟随发件人）" "" || return $?
+    relay_from="${PROMPT_RESULT}"
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_STARTTLS（true/false）" "true" || return $?
+    relay_starttls="${PROMPT_RESULT}"
 
     create_config_file \
       "${smtp_addr}" \
@@ -1164,7 +1207,8 @@ manage_mailforge() {
     echo "3. 查看mailforge状态"
     echo "0. 返回上一级"
     echo
-    choice="$(prompt_with_default "请选择" "")" || return $?
+    prompt_with_default "请选择" "" || return $?
+    choice="${PROMPT_RESULT}"
     case "${choice}" in
       1)
         systemctl stop "${SERVICE_NAME}"
@@ -1219,7 +1263,8 @@ main_menu() {
     echo "3. 卸载mailforge"
     echo "0. 退出"
     echo
-    choice="$(prompt_with_default "请选择" "")" || exit $?
+    prompt_with_default "请选择" "" || exit $?
+    choice="${PROMPT_RESULT}"
     case "${choice}" in
       1)
         install_mailforge
