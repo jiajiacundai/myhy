@@ -1088,8 +1088,11 @@ install_mailforge() {
     prompt_with_default "请输入 MAILFORGE_DB_PATH（数据库路径）" "${DATA_DIR}/mailforge.db" || return $?
     db_path="${PROMPT_RESULT}"
 
+    log "下面开始填写邮箱相关配置。"
+    log "allowed_domains 是允许创建收件邮箱的域名列表；default_domain 是默认收件域名；public_mail_host 通常填写 mail.<你的域名>。"
+
     while true; do
-      prompt_with_default "请输入 MAILFORGE_ALLOWED_DOMAINS（多个域名用逗号分隔）" "" || return $?
+      prompt_with_default "请输入 MAILFORGE_ALLOWED_DOMAINS（可创建邮箱的收件域名，多个用逗号分隔，例如 example.com,mail.example.com）" "" || return $?
       allowed_domains="${PROMPT_RESULT}"
       allowed_domains="$(trim "${allowed_domains}")"
       if [[ -n "${allowed_domains}" ]]; then
@@ -1099,11 +1102,11 @@ install_mailforge() {
     done
 
     default_domain="$(first_domain_from_csv "${allowed_domains}" || true)"
-    prompt_with_default "请输入 MAILFORGE_DEFAULT_DOMAIN（默认域名）" "${default_domain}" || return $?
+    prompt_with_default "请输入 MAILFORGE_DEFAULT_DOMAIN（默认收件域名；用户不选域名时使用）" "${default_domain}" || return $?
     default_domain="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_ALLOW_SUBDOMAINS（true/false）" "true" || return $?
+    prompt_with_default "请输入 MAILFORGE_ALLOW_SUBDOMAINS（是否允许自动生成子域邮箱，如 a.example.com；true/false）" "true" || return $?
     allow_subdomains="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_RANDOM_LENGTH（随机邮箱长度）" "10" || return $?
+    prompt_with_default "请输入 MAILFORGE_RANDOM_LENGTH（随机邮箱名前缀长度，例如 abc123@example.com 前面的长度）" "10" || return $?
     random_length="${PROMPT_RESULT}"
 
     prompt_with_default "请输入 MAILFORGE_PUBLIC_BASE_URL（对外访问地址）" "$(derive_public_base_url_default "${http_addr}")" || return $?
@@ -1112,7 +1115,7 @@ install_mailforge() {
     public_ipv4="${PROMPT_RESULT}"
     prompt_with_default "请输入 MAILFORGE_PUBLIC_IPV6（留空表示不写入）" "${DETECTED_IPV6}" || return $?
     public_ipv6="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_PUBLIC_MAIL_HOST（留空默认 mail.<domain>）" "mail.${default_domain}" || return $?
+    prompt_with_default "请输入 MAILFORGE_PUBLIC_MAIL_HOST（对外邮件主机名，通常填 mail.${default_domain}，用于 MX/SMTP 展示）" "mail.${default_domain}" || return $?
     public_mail_host="${PROMPT_RESULT}"
 
     prompt_with_default "请输入 MAILFORGE_DNS_MANAGER_URL（Cloudflare 管理后台地址）" "" || return $?
@@ -1131,17 +1134,19 @@ install_mailforge() {
     prompt_secret_with_default "请输入 MAILFORGE_WEB_SESSION_SECRET（留空自动生成）" "" || return $?
     web_session_secret="${PROMPT_RESULT}"
 
-    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_HOST（留空表示不使用 relay）" "" || return $?
+    log "如果你不需要通过第三方 SMTP 发信，下面的 SMTP relay 配置可以全部直接回车留空。"
+
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_HOST（第三方 SMTP 中继服务器地址；留空表示不使用 relay）" "" || return $?
     relay_host="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_PORT" "587" || return $?
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_PORT（第三方 SMTP 中继端口，常见为 587/465）" "587" || return $?
     relay_port="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_USERNAME" "" || return $?
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_USERNAME（第三方 SMTP 登录用户名，常见为邮箱地址）" "" || return $?
     relay_username="${PROMPT_RESULT}"
-    prompt_secret_with_default "请输入 MAILFORGE_SMTP_RELAY_PASSWORD" "" || return $?
+    prompt_secret_with_default "请输入 MAILFORGE_SMTP_RELAY_PASSWORD（第三方 SMTP 登录密码或授权码）" "" || return $?
     relay_password="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_FROM（留空跟随发件人）" "" || return $?
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_FROM（中继发信时固定使用的发件邮箱；留空则跟随原始发件人）" "" || return $?
     relay_from="${PROMPT_RESULT}"
-    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_STARTTLS（true/false）" "true" || return $?
+    prompt_with_default "请输入 MAILFORGE_SMTP_RELAY_STARTTLS（是否启用 STARTTLS；true/false）" "true" || return $?
     relay_starttls="${PROMPT_RESULT}"
 
     create_config_file \
