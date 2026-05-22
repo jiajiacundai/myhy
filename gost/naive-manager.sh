@@ -101,6 +101,8 @@ load_state() {
   KEY_FILE="/root/cert/private.key"
   SING_BOX_NAIVE_LISTEN="127.0.0.1"
   SING_BOX_NAIVE_PORT="10080"
+  SING_BOX_QUIC_LISTEN="::"
+  SING_BOX_QUIC_PORT="443"
   if [[ -f "$STATE_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$STATE_FILE"
@@ -123,6 +125,8 @@ CERT_FILE=$(printf '%q' "$CERT_FILE")
 KEY_FILE=$(printf '%q' "$KEY_FILE")
 SING_BOX_NAIVE_LISTEN=$(printf '%q' "$SING_BOX_NAIVE_LISTEN")
 SING_BOX_NAIVE_PORT=$(printf '%q' "$SING_BOX_NAIVE_PORT")
+SING_BOX_QUIC_LISTEN=$(printf '%q' "$SING_BOX_QUIC_LISTEN")
+SING_BOX_QUIC_PORT=$(printf '%q' "$SING_BOX_QUIC_PORT")
 EOF_STATE
   chmod 600 "$STATE_FILE"
 }
@@ -237,6 +241,25 @@ write_sing_box_config() {
           "password": $(json_string "$NAIVE_PASSWORD")
         }
       ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": $(json_string "$CERT_FILE"),
+        "key_path": $(json_string "$KEY_FILE")
+      }
+    },
+    {
+      "type": "naive",
+      "tag": "naive-quic-in",
+      "network": "udp",
+      "listen": $(json_string "$SING_BOX_QUIC_LISTEN"),
+      "listen_port": $SING_BOX_QUIC_PORT,
+      "users": [
+        {
+          "username": $(json_string "$NAIVE_USERNAME"),
+          "password": $(json_string "$NAIVE_PASSWORD")
+        }
+      ],
+      "quic_congestion_control": "bbr",
       "tls": {
         "enabled": true,
         "certificate_path": $(json_string "$CERT_FILE"),
@@ -395,6 +418,13 @@ EOF_SERVICE
   ok "systemd 服务已启动: $SING_BOX_SERVICE, $NAIVE_SERVICE"
 }
 
+show_naive_status() {
+  printf "${GREEN}\nnaive-front 状态${NC}\n"
+  systemctl --no-pager status "$NAIVE_SERVICE" || true
+  printf "${GREEN}\nsing-box 状态${NC}\n"
+  systemctl --no-pager status "$SING_BOX_SERVICE" || true
+}
+
 install_naive() {
   if [[ -f "$SING_BOX_CONFIG" || -f "$NAIVE_CONFIG" ]]; then
     warn "检测到已有配置，进入更新 naive 节点配置"
@@ -417,11 +447,13 @@ manage_naive() {
     printf "${GREEN}\n管理 naive${NC}\n"
     echo "1. 关闭 naive"
     echo "2. 重启 naive"
+    echo "3. 查看 naive 状态"
     echo "0. 返回上一级"
     read -r -p "请选择: " choice || true
     case "$choice" in
       1) systemctl stop "$NAIVE_SERVICE" "$SING_BOX_SERVICE"; ok "已关闭 naive"; pause ;;
       2) systemctl restart "$SING_BOX_SERVICE" "$NAIVE_SERVICE"; ok "已重启 naive"; pause ;;
+      3) show_naive_status; pause ;;
       0) return ;;
       *) warn "无效选项" ;;
     esac
@@ -438,6 +470,7 @@ update_node_config() {
   else
     info "当前 sing-box 出站: direct"
   fi
+  info "当前 sing-box QUIC 入站: udp://[${SING_BOX_QUIC_LISTEN}]:${SING_BOX_QUIC_PORT}"
   collect_node_config
   write_configs
   install_services
