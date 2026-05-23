@@ -1,9 +1,27 @@
-#!/usr/bin/env bash
+#!/bin/sh
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+  if [ -f /etc/alpine-release ] && command -v apk >/dev/null 2>&1; then
+    if [ "$(id -u)" != "0" ]; then
+      echo "请使用 root 运行此脚本"
+      exit 1
+    fi
+    apk update && apk add --no-cache bash
+    exec bash "$0" "$@"
+  fi
+  echo "请使用 bash 运行此脚本"
+  exit 1
+fi
 set -euo pipefail
 
 # naive-front 独立模式管理脚本（kaifa-2026-05-25 起）
 # 不再依赖 sing-box；naive-front 自带 TCP（HTTP/1.1+HTTP/2）+ QUIC（HTTP/3）双入站
 # 与 direct/socks5/http 三种出站。
+#
+# 兼容 systemd（Debian/Ubuntu/CentOS 等）与 OpenRC（Alpine）。
+# Alpine 上会自动通过 apk 安装缺失的依赖（bash / curl / libcap-utils / iproute2-ss / openrc）。
 
 BASE_DIR="/root/docker-compose/naive-front"
 NAIVE_BIN="$BASE_DIR/naive-front"
@@ -28,6 +46,83 @@ warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
 err() { printf "${RED}[ERR]${NC} %s\n" "$*" >&2; }
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+INIT_SYSTEM=""
+
+is_alpine() { [[ -f /etc/alpine-release ]]; }
+
+detect_init_system() {
+  if [[ -n "$INIT_SYSTEM" ]]; then
+    return
+  fi
+  if [[ -d /run/systemd/system ]] && need_cmd systemctl; then
+    INIT_SYSTEM="systemd"
+  elif need_cmd rc-service && need_cmd rc-update; then
+    INIT_SYSTEM="openrc"
+  elif need_cmd systemctl; then
+    INIT_SYSTEM="systemd"
+  else
+    err "未识别的 init 系统（仅支持 systemd / OpenRC）"
+    exit 1
+  fi
+}
+
+ensure_runtime_deps() {
+  if is_alpine && need_cmd apk; then
+    local pkgs=()
+    need_cmd curl || pkgs+=(curl)
+    need_cmd setcap || pkgs+=(libcap-utils)
+    need_cmd ss || pkgs+=(iproute2-ss)
+    if ! need_cmd rc-service || ! need_cmd rc-update || ! need_cmd openrc-run; then
+      pkgs+=(openrc)
+    fi
+    if (( ${#pkgs[@]} > 0 )); then
+      info "Alpine: 安装依赖 ${pkgs[*]}"
+      apk add --no-cache "${pkgs[@]}" >/dev/null 2>&1 || warn "Alpine 依赖安装失败，部分功能可能受影响"
+    fi
+  fi
+}
+
+svc_restart() {
+  detect_init_system
+  case "$INIT_SYSTEM" in
+    systemd) systemctl restart "$NAIVE_SERVICE" ;;
+    openrc)  rc-service naive-front restart 2>/dev/null || rc-service naive-front start ;;
+  esac
+}
+
+svc_stop() {
+  detect_init_system
+  case "$INIT_SYSTEM" in
+    systemd) systemctl stop "$NAIVE_SERVICE" 2>/dev/null || true ;;
+    openrc)  rc-service naive-front stop 2>/dev/null || true ;;
+  esac
+}
+
+svc_status() {
+  detect_init_system
+  case "$INIT_SYSTEM" in
+    systemd) systemctl --no-pager status "$NAIVE_SERVICE" || true ;;
+    openrc)  rc-service naive-front status || true ;;
+  esac
+}
+
+svc_disable_remove() {
+  detect_init_system
+  case "$INIT_SYSTEM" in
+    systemd)
+      systemctl stop "$NAIVE_SERVICE" 2>/dev/null || true
+      systemctl disable "$NAIVE_SERVICE" 2>/dev/null || true
+      rm -f "/etc/systemd/system/$NAIVE_SERVICE"
+      systemctl daemon-reload
+      ;;
+    openrc)
+      rc-service naive-front stop 2>/dev/null || true
+      rc-update del naive-front default 2>/dev/null || true
+      rm -f /etc/init.d/naive-front
+      ;;
+  esac
+}
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -318,7 +413,7 @@ write_configs() {
   ok "配置已生成: $NAIVE_CONFIG"
 }
 
-install_service() {
+install_service_systemd() {
   cat >"/etc/systemd/system/$NAIVE_SERVICE" <<EOF_SERVICE
 [Unit]
 Description=naive-front standalone naive proxy
@@ -345,23 +440,70 @@ EOF_SERVICE
   ok "systemd 服务已启动: $NAIVE_SERVICE"
 }
 
+install_service_openrc() {
+  mkdir -p /var/log
+  cat >"/etc/init.d/naive-front" <<EOF_INIT
+#!/sbin/openrc-run
+
+name="naive-front"
+description="naive-front standalone naive proxy"
+command="$NAIVE_BIN"
+command_args="-config $NAIVE_CONFIG"
+command_background="yes"
+command_user="root"
+pidfile="/run/naive-front.pid"
+output_log="/var/log/naive-front.log"
+error_log="/var/log/naive-front.log"
+directory="$BASE_DIR"
+rc_ulimit="-n 1048576"
+
+depend() {
+  need net
+  after firewall
+}
+EOF_INIT
+  chmod +x /etc/init.d/naive-front
+  rc-update add naive-front default >/dev/null 2>&1 || true
+  rc-service naive-front restart 2>/dev/null || rc-service naive-front start
+  ok "OpenRC 服务已启动: naive-front"
+}
+
+install_service() {
+  detect_init_system
+  case "$INIT_SYSTEM" in
+    systemd) install_service_systemd ;;
+    openrc)  install_service_openrc ;;
+  esac
+}
+
 show_status() {
   printf "${GREEN}\nnaive-front 状态${NC}\n"
-  systemctl --no-pager status "$NAIVE_SERVICE" || true
+  svc_status
   printf "${GREEN}\n监听端口${NC}\n"
-  ss -tlnp 2>/dev/null | grep -E ':443\s' || true
-  ss -ulnp 2>/dev/null | grep -E ':443\s' || true
+  if need_cmd ss; then
+    ss -tlnp 2>/dev/null | grep -E ':443\s' || true
+    ss -ulnp 2>/dev/null | grep -E ':443\s' || true
+  elif need_cmd netstat; then
+    netstat -tlnp 2>/dev/null | grep -E ':443\s' || true
+    netstat -ulnp 2>/dev/null | grep -E ':443\s' || true
+  else
+    warn "未找到 ss / netstat，跳过端口检查（Alpine: apk add iproute2-ss）"
+  fi
 }
 
 install_naive() {
+  ensure_runtime_deps
+  detect_init_system
+  mkdir -p "$BASE_DIR"
+  if [[ ! -f "$NAIVE_BIN" ]]; then
+    install_naive_binary
+  fi
   if [[ -f "$NAIVE_CONFIG" ]]; then
     warn "检测到已有配置，进入更新 naive 节点配置流程"
     update_node_config
     return
   fi
   collect_node_config
-  mkdir -p "$BASE_DIR"
-  install_naive_binary
   write_configs
   install_service
   print_node_summary
@@ -392,8 +534,8 @@ manage_naive() {
     echo "0. 返回上一级"
     read -r -p "请选择: " choice || true
     case "$choice" in
-      1) systemctl stop "$NAIVE_SERVICE"; ok "已关闭"; pause ;;
-      2) systemctl restart "$NAIVE_SERVICE"; ok "已重启"; pause ;;
+      1) svc_stop; ok "已关闭"; pause ;;
+      2) svc_restart; ok "已重启"; pause ;;
       3) show_status; pause ;;
       4) print_node_summary; pause ;;
       0) return ;;
@@ -422,7 +564,7 @@ update_naive_binary() {
     return
   fi
   install_naive_binary
-  systemctl restart "$NAIVE_SERVICE"
+  svc_restart
   ok "naive-front 二进制已更新并重启"
 }
 
@@ -440,7 +582,7 @@ add_reverse_proxy() {
   printf '%s\t%s\n' "$domain" "$target" >>"$REVERSE_PROXY_FILE"
   load_state
   write_configs
-  systemctl restart "$NAIVE_SERVICE"
+  svc_restart
   ok "已添加反向代理: $domain -> $target"
 }
 
@@ -474,7 +616,7 @@ delete_reverse_proxy() {
   mv "$REVERSE_PROXY_FILE.tmp" "$REVERSE_PROXY_FILE"
   load_state
   write_configs
-  systemctl restart "$NAIVE_SERVICE"
+  svc_restart
   ok "已删除反向代理"
 }
 
@@ -498,10 +640,7 @@ uninstall_naive() {
   confirm_default_no "是否确认卸载 naive-front" || return
   local delete_config=false
   confirm_default_no "是否删除配置目录 $BASE_DIR" && delete_config=true
-  systemctl stop "$NAIVE_SERVICE" 2>/dev/null || true
-  systemctl disable "$NAIVE_SERVICE" 2>/dev/null || true
-  rm -f "/etc/systemd/system/$NAIVE_SERVICE"
-  systemctl daemon-reload
+  svc_disable_remove
   if [[ "$delete_config" == true ]]; then
     rm -rf "$BASE_DIR"
     ok "已卸载并删除配置目录 $BASE_DIR"
@@ -513,6 +652,7 @@ uninstall_naive() {
 
 main_menu() {
   require_root
+  ensure_runtime_deps
   while true; do
     printf "${GREEN}\nnaive-front 管理脚本（standalone 模式）${NC}\n"
     echo "1. 安装 naive-front"
