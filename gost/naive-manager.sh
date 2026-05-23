@@ -99,8 +99,6 @@ load_state() {
   SOCKS5_PASSWORD=""
   CERT_FILE="/root/cert/cert.crt"
   KEY_FILE="/root/cert/private.key"
-  SING_BOX_NAIVE_LISTEN="127.0.0.1"
-  SING_BOX_NAIVE_PORT="10080"
   SING_BOX_QUIC_LISTEN="::"
   SING_BOX_QUIC_PORT="443"
   if [[ -f "$STATE_FILE" ]]; then
@@ -123,8 +121,6 @@ SOCKS5_USERNAME=$(printf '%q' "$SOCKS5_USERNAME")
 SOCKS5_PASSWORD=$(printf '%q' "$SOCKS5_PASSWORD")
 CERT_FILE=$(printf '%q' "$CERT_FILE")
 KEY_FILE=$(printf '%q' "$KEY_FILE")
-SING_BOX_NAIVE_LISTEN=$(printf '%q' "$SING_BOX_NAIVE_LISTEN")
-SING_BOX_NAIVE_PORT=$(printf '%q' "$SING_BOX_NAIVE_PORT")
 SING_BOX_QUIC_LISTEN=$(printf '%q' "$SING_BOX_QUIC_LISTEN")
 SING_BOX_QUIC_PORT=$(printf '%q' "$SING_BOX_QUIC_PORT")
 EOF_STATE
@@ -232,24 +228,6 @@ write_sing_box_config() {
     {
       "type": "naive",
       "tag": "naive-in",
-      "network": "tcp",
-      "listen": $(json_string "$SING_BOX_NAIVE_LISTEN"),
-      "listen_port": $SING_BOX_NAIVE_PORT,
-      "users": [
-        {
-          "username": $(json_string "$NAIVE_USERNAME"),
-          "password": $(json_string "$NAIVE_PASSWORD")
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "certificate_path": $(json_string "$CERT_FILE"),
-        "key_path": $(json_string "$KEY_FILE")
-      }
-    },
-    {
-      "type": "naive",
-      "tag": "naive-quic-in",
       "network": "udp",
       "listen": $(json_string "$SING_BOX_QUIC_LISTEN"),
       "listen_port": $SING_BOX_QUIC_PORT,
@@ -315,15 +293,6 @@ write_naive_config() {
     "cert_file": $(json_string "$CERT_FILE"),
     "key_file": $(json_string "$KEY_FILE")
   },
-  "forward_proxy": {
-    "enabled": true,
-    "address": $(json_string "${SING_BOX_NAIVE_LISTEN}:${SING_BOX_NAIVE_PORT}"),
-    "username": $(json_string "$NAIVE_USERNAME"),
-    "password": $(json_string "$NAIVE_PASSWORD"),
-    "tls": true,
-    "server_name": $(json_string "$NAIVE_DOMAIN"),
-    "insecure": false
-  },
   "masquerade": {
     "title": "Default Site",
     "message": "The requested site is temporarily unavailable."
@@ -331,7 +300,7 @@ write_naive_config() {
   "routes": [
     {
       "domains": [$(json_string "$NAIVE_DOMAIN")],
-      "naive": true,
+      "naive": false,
       "masquerade": {
         "reverse_proxy": $(json_string "$MASQUERADE_URL"),
         "preserve_host": false
