@@ -97,6 +97,9 @@ load_state() {
   SOCKS5_PORT="10808"
   SOCKS5_USERNAME=""
   SOCKS5_PASSWORD=""
+  ENABLE_NAIVE_TCP="false"
+  SING_BOX_MIXED_LISTEN="127.0.0.1"
+  SING_BOX_MIXED_PORT="10081"
   CERT_FILE="/root/cert/cert.crt"
   KEY_FILE="/root/cert/private.key"
   SING_BOX_QUIC_LISTEN="::"
@@ -119,6 +122,9 @@ SOCKS5_SERVER=$(printf '%q' "$SOCKS5_SERVER")
 SOCKS5_PORT=$(printf '%q' "$SOCKS5_PORT")
 SOCKS5_USERNAME=$(printf '%q' "$SOCKS5_USERNAME")
 SOCKS5_PASSWORD=$(printf '%q' "$SOCKS5_PASSWORD")
+ENABLE_NAIVE_TCP=$(printf '%q' "$ENABLE_NAIVE_TCP")
+SING_BOX_MIXED_LISTEN=$(printf '%q' "$SING_BOX_MIXED_LISTEN")
+SING_BOX_MIXED_PORT=$(printf '%q' "$SING_BOX_MIXED_PORT")
 CERT_FILE=$(printf '%q' "$CERT_FILE")
 KEY_FILE=$(printf '%q' "$KEY_FILE")
 SING_BOX_QUIC_LISTEN=$(printf '%q' "$SING_BOX_QUIC_LISTEN")
@@ -209,6 +215,11 @@ collect_node_config() {
     SOCKS5_USERNAME=""
     SOCKS5_PASSWORD=""
   fi
+  if confirm_default_no "是否启用 naive TCP"; then
+    ENABLE_NAIVE_TCP="true"
+  else
+    ENABLE_NAIVE_TCP="false"
+  fi
   CERT_FILE="$(prompt_value "TLS 证书文件" "$CERT_FILE" true)"
   KEY_FILE="$(prompt_value "TLS 私钥文件" "$KEY_FILE" true)"
   save_state
@@ -225,6 +236,18 @@ write_sing_box_config() {
     "timestamp": true
   },
   "inbounds": [
+EOF_JSON
+    if [[ "$ENABLE_NAIVE_TCP" == "true" ]]; then
+      cat <<EOF_JSON
+    {
+      "type": "mixed",
+      "tag": "naive-front-in",
+      "listen": $(json_string "$SING_BOX_MIXED_LISTEN"),
+      "listen_port": $SING_BOX_MIXED_PORT
+    },
+EOF_JSON
+    fi
+    cat <<EOF_JSON
     {
       "type": "naive",
       "tag": "naive-in",
@@ -292,7 +315,20 @@ write_naive_config() {
   "tls": {
     "cert_file": $(json_string "$CERT_FILE"),
     "key_file": $(json_string "$KEY_FILE")
-  },
+  }
+EOF_JSON
+    if [[ "$ENABLE_NAIVE_TCP" == "true" ]]; then
+      cat <<EOF_JSON
+  ,
+  "forward_proxy": {
+    "enabled": true,
+    "address": $(json_string "${SING_BOX_MIXED_LISTEN}:${SING_BOX_MIXED_PORT}"),
+    "tls": false
+  }
+EOF_JSON
+    fi
+    cat <<EOF_JSON
+  ,
   "masquerade": {
     "title": "Default Site",
     "message": "The requested site is temporarily unavailable."
@@ -300,7 +336,7 @@ write_naive_config() {
   "routes": [
     {
       "domains": [$(json_string "$NAIVE_DOMAIN")],
-      "naive": false,
+      "naive": $ENABLE_NAIVE_TCP,
       "masquerade": {
         "reverse_proxy": $(json_string "$MASQUERADE_URL"),
         "preserve_host": false
@@ -438,6 +474,11 @@ update_node_config() {
     info "当前 sing-box 出站: socks5://${SOCKS5_SERVER}:${SOCKS5_PORT}"
   else
     info "当前 sing-box 出站: direct"
+  fi
+  if [[ "$ENABLE_NAIVE_TCP" == "true" ]]; then
+    info "当前 naive TCP: 启用，naive-front -> mixed://${SING_BOX_MIXED_LISTEN}:${SING_BOX_MIXED_PORT}"
+  else
+    info "当前 naive TCP: 未启用"
   fi
   info "当前 sing-box QUIC 入站: udp://[${SING_BOX_QUIC_LISTEN}]:${SING_BOX_QUIC_PORT}"
   collect_node_config
