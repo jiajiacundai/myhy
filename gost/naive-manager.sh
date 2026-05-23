@@ -318,12 +318,6 @@ write_naive_config() {
     "min_version": "1.2",
     "curve_preferences": ["x25519", "p256", "p384"],
     "session_tickets_disabled": false
-  },
-  "http2": {
-    "max_concurrent_streams": 128,
-    "max_decoder_header_table_size": 4096,
-    "max_encoder_header_table_size": 4096,
-    "max_read_frame_size": 16384
   }
 EOF_JSON
     if [[ "$ENABLE_NAIVE_TCP" == "true" ]]; then
