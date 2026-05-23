@@ -457,30 +457,24 @@ install_naive() {
 # the receive window even when the application-layer H2 buffer is generous, so
 # upload throughput collapses to RTT-bound minutes into a session. We do not
 # touch tcp_congestion_control — BBR is unavailable on minimal/cloud kernels,
-# and the kernel-chosen default (cubic/reno) is fine once the buffers and
-# bufferbloat knobs are sane.
+# and the kernel-chosen default (cubic/reno) is fine once the buffers are sane.
+# Only ceiling-raising knobs are tuned: setting low-latency-focused knobs
+# (tcp_notsent_lowat, TFO, MTU probing) globally regresses high-RTT throughput.
 apply_tcp_tuning() {
   local conf=/etc/sysctl.d/99-naive-front.conf
   info "写入 TCP 调优 ${conf}"
   cat >"$conf" <<'EOF_SYSCTL'
 # Installed by naive-manager.sh — raise TCP autotune ceilings so HTTP/2 CONNECT
 # tunnels (sing-box naive TCP / udp_over_tcp) can saturate high-BDP links.
+# These knobs only RAISE upper bounds; they never lower throughput.
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 net.ipv4.tcp_rmem = 4096 262144 16777216
 net.ipv4.tcp_wmem = 4096 262144 16777216
-# Limit unsent bytes per socket to 128 KiB to keep TCP feedback fresh and
-# avoid bufferbloat starving the rest of the box under heavy upload.
-net.ipv4.tcp_notsent_lowat = 131072
 # Long-lived CONNECT tunnels often idle briefly; without this they are reset
 # back to the initial window after every quiet period, producing the
 # "starts fast then keeps slowing down" symptom.
 net.ipv4.tcp_slow_start_after_idle = 0
-# Cross-border paths sometimes blackhole MTU-1500 packets; let TCP probe down.
-net.ipv4.tcp_mtu_probing = 1
-# TCP Fast Open both directions — shaves a round-trip on the many short
-# connections sing-box forwards through naive-front.
-net.ipv4.tcp_fastopen = 3
 EOF_SYSCTL
   if sysctl --system >/dev/null 2>&1; then
     ok "已应用 TCP 调优"
