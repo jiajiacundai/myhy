@@ -447,46 +447,7 @@ install_naive() {
   [[ "$install_sing_box_bin" == true ]] && install_sing_box_binary
   [[ "$install_naive_bin" == true ]] && install_naive_binary
   write_configs
-  apply_tcp_tuning
   install_services
-}
-
-# apply_tcp_tuning unlocks Linux TCP autotune so that HTTP/2 CONNECT tunnels
-# (sing-box naive TCP, udp_over_tcp) can saturate a high-BDP cross-border link.
-# Defaults leave net.core.{r,w}mem_max at 208 KiB on Debian 12/13, which caps
-# the receive window even when the application-layer H2 buffer is generous, so
-# upload throughput collapses to RTT-bound minutes into a session. We do not
-# touch tcp_congestion_control — BBR is unavailable on minimal/cloud kernels,
-# and the kernel-chosen default (cubic/reno) is fine once the buffers and
-# bufferbloat knobs are sane.
-apply_tcp_tuning() {
-  local conf=/etc/sysctl.d/99-naive-front.conf
-  info "写入 TCP 调优 ${conf}"
-  cat >"$conf" <<'EOF_SYSCTL'
-# Installed by naive-manager.sh — raise TCP autotune ceilings so HTTP/2 CONNECT
-# tunnels (sing-box naive TCP / udp_over_tcp) can saturate high-BDP links.
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 262144 16777216
-net.ipv4.tcp_wmem = 4096 262144 16777216
-# Limit unsent bytes per socket to 128 KiB to keep TCP feedback fresh and
-# avoid bufferbloat starving the rest of the box under heavy upload.
-net.ipv4.tcp_notsent_lowat = 131072
-# Long-lived CONNECT tunnels often idle briefly; without this they are reset
-# back to the initial window after every quiet period, producing the
-# "starts fast then keeps slowing down" symptom.
-net.ipv4.tcp_slow_start_after_idle = 0
-# Cross-border paths sometimes blackhole MTU-1500 packets; let TCP probe down.
-net.ipv4.tcp_mtu_probing = 1
-# TCP Fast Open both directions — shaves a round-trip on the many short
-# connections sing-box forwards through naive-front.
-net.ipv4.tcp_fastopen = 3
-EOF_SYSCTL
-  if sysctl --system >/dev/null 2>&1; then
-    ok "已应用 TCP 调优"
-  else
-    warn "sysctl --system 返回非零，请手动检查 ${conf}"
-  fi
 }
 
 manage_naive() {
@@ -525,7 +486,6 @@ update_node_config() {
   info "当前 sing-box QUIC 入站: udp://[${SING_BOX_QUIC_LISTEN}]:${SING_BOX_QUIC_PORT}"
   collect_node_config
   write_configs
-  apply_tcp_tuning
   install_services
 }
 
@@ -604,8 +564,6 @@ uninstall_naive() {
   systemctl stop "$NAIVE_SERVICE" "$SING_BOX_SERVICE" 2>/dev/null || true
   systemctl disable "$NAIVE_SERVICE" "$SING_BOX_SERVICE" 2>/dev/null || true
   rm -f "/etc/systemd/system/$NAIVE_SERVICE" "/etc/systemd/system/$SING_BOX_SERVICE"
-  rm -f /etc/sysctl.d/99-naive-front.conf
-  sysctl --system >/dev/null 2>&1 || true
   systemctl daemon-reload
   if [[ "$delete_config" == true ]]; then
     rm -rf "$BASE_DIR"
