@@ -333,7 +333,10 @@ write_naive_config() {
   "inbound": {
     "tcp": {
       "disabled": $([[ "$ENABLE_TCP" == "true" ]] && printf 'false' || printf 'true'),
-      "http2": {}
+      "http2": {
+        "max_upload_buffer_per_stream": 4194304,
+        "max_upload_buffer_per_connection": 8388608
+      }
     },
     "quic": {
       "disabled": $([[ "$ENABLE_QUIC" == "true" ]] && printf 'false' || printf 'true')
