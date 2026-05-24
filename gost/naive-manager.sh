@@ -83,38 +83,6 @@ ensure_runtime_deps() {
   fi
 }
 
-# tune_udp_buffers — naive QUIC (HTTP/3) 高带宽下需要更大的 UDP socket buffer。
-# quic-go 官方文档建议 net.core.{r,w}mem_max 至少 7.5 MB；Linux 默认通常只有
-# 200 KB 左右，会在高速传输时直接丢包。
-# 把上限提到 16 MB（与 naive-front 内部 SetReadBuffer/SetWriteBuffer=7.5MB 配套），
-# 持久化到 /etc/sysctl.d/99-naive-front.conf。
-tune_udp_buffers() {
-  local desired=16777216
-  local cur_r cur_w
-  cur_r="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
-  cur_w="$(sysctl -n net.core.wmem_max 2>/dev/null || echo 0)"
-  local need_apply=false
-  if (( cur_r < desired )); then need_apply=true; fi
-  if (( cur_w < desired )); then need_apply=true; fi
-  if [[ "$need_apply" == false ]]; then
-    info "UDP buffer 已满足要求 (rmem_max=$cur_r wmem_max=$cur_w)"
-    return
-  fi
-  info "提升 UDP buffer 上限到 $desired 字节（naive QUIC 高速吞吐需要）"
-  if [[ -d /etc/sysctl.d ]]; then
-    cat >/etc/sysctl.d/99-naive-front.conf <<EOF_SYSCTL
-# naive-front: QUIC/HTTP3 高速吞吐需要更大的 UDP socket buffer。
-# 见 https://quic-go.net/docs/quic/optimizations/ 与 naive-manager.sh
-net.core.rmem_max=$desired
-net.core.wmem_max=$desired
-EOF_SYSCTL
-    sysctl --system >/dev/null 2>&1 || true
-  fi
-  # Also apply immediately in case sysctl --system isn't honored (e.g. container).
-  sysctl -w "net.core.rmem_max=$desired" >/dev/null 2>&1 || warn "无法设置 net.core.rmem_max（可能在容器/非特权环境）"
-  sysctl -w "net.core.wmem_max=$desired" >/dev/null 2>&1 || warn "无法设置 net.core.wmem_max"
-}
-
 svc_restart() {
   detect_init_system
   case "$INIT_SYSTEM" in
@@ -525,7 +493,6 @@ show_status() {
 
 install_naive() {
   ensure_runtime_deps
-  tune_udp_buffers
   detect_init_system
   mkdir -p "$BASE_DIR"
   if [[ ! -f "$NAIVE_BIN" ]]; then
