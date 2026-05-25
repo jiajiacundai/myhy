@@ -183,6 +183,34 @@ json_escape() {
 
 json_string() { printf '"%s"' "$(json_escape "$1")"; }
 
+prompt_quic_congestion_control() {
+  local default_value="${1:-bbr}" value
+  while true; do
+    value="$(prompt_value "QUIC 拥塞控制 bbr/bbr_standard/bbr2/bbr2_variant/cubic/reno" "$default_value" false)"
+    case "$value" in
+      bbr|bbr_standard|bbr2|bbr2_variant|cubic|reno)
+        printf '%s' "$value"
+        return 0
+        ;;
+      *)
+        warn "无效 QUIC 拥塞控制: $value"
+        ;;
+    esac
+  done
+}
+
+prompt_uint_value() {
+  local prompt="$1" default_value="$2" value
+  while true; do
+    value="$(prompt_value "$prompt" "$default_value" false)"
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    warn "请输入非负整数"
+  done
+}
+
 load_state() {
   NAIVE_USERNAME=""
   NAIVE_PASSWORD=""
@@ -192,6 +220,11 @@ load_state() {
   KEY_FILE=""
   ENABLE_TCP="true"
   ENABLE_QUIC="true"
+  QUIC_CONGESTION_CONTROL="bbr"
+  QUIC_INITIAL_STREAM_RECEIVE_WINDOW="8388608"
+  QUIC_MAX_STREAM_RECEIVE_WINDOW="67108864"
+  QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW="20971520"
+  QUIC_MAX_CONNECTION_RECEIVE_WINDOW="134217728"
   OUTBOUND_TYPE="direct"
   SOCKS5_SERVER=""
   SOCKS5_PORT="1080"
@@ -215,6 +248,11 @@ CERT_FILE=$(printf '%q' "$CERT_FILE")
 KEY_FILE=$(printf '%q' "$KEY_FILE")
 ENABLE_TCP=$(printf '%q' "$ENABLE_TCP")
 ENABLE_QUIC=$(printf '%q' "$ENABLE_QUIC")
+QUIC_CONGESTION_CONTROL=$(printf '%q' "$QUIC_CONGESTION_CONTROL")
+QUIC_INITIAL_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_INITIAL_STREAM_RECEIVE_WINDOW")
+QUIC_MAX_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_MAX_STREAM_RECEIVE_WINDOW")
+QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW=$(printf '%q' "$QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW")
+QUIC_MAX_CONNECTION_RECEIVE_WINDOW=$(printf '%q' "$QUIC_MAX_CONNECTION_RECEIVE_WINDOW")
 OUTBOUND_TYPE=$(printf '%q' "$OUTBOUND_TYPE")
 SOCKS5_SERVER=$(printf '%q' "$SOCKS5_SERVER")
 SOCKS5_PORT=$(printf '%q' "$SOCKS5_PORT")
@@ -283,6 +321,14 @@ collect_node_config() {
     warn "至少要保留一个入站，重置为两者都开"
     ENABLE_TCP="true"; ENABLE_QUIC="true"
   fi
+  if [[ "$ENABLE_QUIC" == "true" ]]; then
+    printf "${CYAN}QUIC 性能参数（回车使用当前值）${NC}\n"
+    QUIC_CONGESTION_CONTROL="$(prompt_quic_congestion_control "${QUIC_CONGESTION_CONTROL:-bbr}")"
+    QUIC_INITIAL_STREAM_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 初始单流接收窗口 bytes" "${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}")"
+    QUIC_MAX_STREAM_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 最大单流接收窗口 bytes" "${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}")"
+    QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 初始连接接收窗口 bytes" "${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}")"
+    QUIC_MAX_CONNECTION_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 最大连接接收窗口 bytes" "${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}")"
+  fi
 
   printf "${CYAN}出站类型${NC}\n"
   echo "1) direct  — 直接拨号到目标（默认，最简单）"
@@ -339,7 +385,12 @@ write_naive_config() {
       }
     },
     "quic": {
-      "disabled": $([[ "$ENABLE_QUIC" == "true" ]] && printf 'false' || printf 'true')
+      "disabled": $([[ "$ENABLE_QUIC" == "true" ]] && printf 'false' || printf 'true'),
+      "congestion_control": $(json_string "$QUIC_CONGESTION_CONTROL"),
+      "initial_stream_receive_window": $QUIC_INITIAL_STREAM_RECEIVE_WINDOW,
+      "max_stream_receive_window": $QUIC_MAX_STREAM_RECEIVE_WINDOW,
+      "initial_connection_receive_window": $QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW,
+      "max_connection_receive_window": $QUIC_MAX_CONNECTION_RECEIVE_WINDOW
     }
   },
   "outbound": {
@@ -520,6 +571,10 @@ print_node_summary() {
   echo "密码:     $NAIVE_PASSWORD"
   echo "TCP 入站: $([[ "$ENABLE_TCP" == "true" ]] && echo "开启 (https://$NAIVE_DOMAIN:443)" || echo "关闭")"
   echo "QUIC 入站: $([[ "$ENABLE_QUIC" == "true" ]] && echo "开启 (quic://$NAIVE_DOMAIN:443)" || echo "关闭")"
+  if [[ "$ENABLE_QUIC" == "true" ]]; then
+    echo "QUIC CC:   ${QUIC_CONGESTION_CONTROL:-bbr}"
+    echo "QUIC 窗口: stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
+  fi
   case "$OUTBOUND_TYPE" in
     direct) echo "出站:     direct (直连)" ;;
     socks5) echo "出站:     socks5://$SOCKS5_SERVER:$SOCKS5_PORT" ;;
@@ -554,6 +609,8 @@ update_node_config() {
   info "当前伪装网站:       ${MASQUERADE_URL:-未设置}"
   info "当前 TCP 入站:      ${ENABLE_TCP:-true}"
   info "当前 QUIC 入站:     ${ENABLE_QUIC:-true}"
+  info "当前 QUIC 拥塞控制: ${QUIC_CONGESTION_CONTROL:-bbr}"
+  info "当前 QUIC 窗口:     stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
   info "当前出站类型:       ${OUTBOUND_TYPE:-direct}"
   collect_node_config
   write_configs
