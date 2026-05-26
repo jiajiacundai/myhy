@@ -373,7 +373,7 @@ write_naive_config() {
     "cert_file": $(json_string "$CERT_FILE"),
     "key_file": $(json_string "$KEY_FILE"),
     "min_version": "1.2",
-    "curve_preferences": ["x25519", "p256", "p384"],
+    "curve_preferences": ["x25519mlkem768", "x25519", "p256"],
     "session_tickets_disabled": false
   },
   "inbound": {
