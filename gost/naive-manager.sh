@@ -221,6 +221,8 @@ load_state() {
   ENABLE_TCP="true"
   ENABLE_QUIC="true"
   QUIC_CONGESTION_CONTROL="bbr"
+  QUIC_KEEP_ALIVE_PERIOD=""
+  QUIC_ALLOW_0RTT="true"
   QUIC_INITIAL_STREAM_RECEIVE_WINDOW="8388608"
   QUIC_MAX_STREAM_RECEIVE_WINDOW="67108864"
   QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW="20971520"
@@ -249,6 +251,8 @@ KEY_FILE=$(printf '%q' "$KEY_FILE")
 ENABLE_TCP=$(printf '%q' "$ENABLE_TCP")
 ENABLE_QUIC=$(printf '%q' "$ENABLE_QUIC")
 QUIC_CONGESTION_CONTROL=$(printf '%q' "$QUIC_CONGESTION_CONTROL")
+QUIC_KEEP_ALIVE_PERIOD=$(printf '%q' "$QUIC_KEEP_ALIVE_PERIOD")
+QUIC_ALLOW_0RTT=$(printf '%q' "$QUIC_ALLOW_0RTT")
 QUIC_INITIAL_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_INITIAL_STREAM_RECEIVE_WINDOW")
 QUIC_MAX_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_MAX_STREAM_RECEIVE_WINDOW")
 QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW=$(printf '%q' "$QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW")
@@ -324,6 +328,18 @@ collect_node_config() {
   if [[ "$ENABLE_QUIC" == "true" ]]; then
     printf "${CYAN}QUIC 性能参数（回车使用当前值）${NC}\n"
     QUIC_CONGESTION_CONTROL="$(prompt_quic_congestion_control "${QUIC_CONGESTION_CONTROL:-bbr}")"
+    QUIC_KEEP_ALIVE_PERIOD="$(prompt_value "QUIC 服务端 PING 间隔（空/0=关闭，示例 25s）" "${QUIC_KEEP_ALIVE_PERIOD:-}" false)"
+    if [[ "${QUIC_ALLOW_0RTT:-true}" == "false" ]]; then
+      if confirm_default_no "启用 QUIC 0-RTT（默认启用，对齐 Caddy/quic-go）"; then
+        QUIC_ALLOW_0RTT="true"
+      else
+        QUIC_ALLOW_0RTT="false"
+      fi
+    elif confirm_default_yes "启用 QUIC 0-RTT（默认启用，对齐 Caddy/quic-go）"; then
+      QUIC_ALLOW_0RTT="true"
+    else
+      QUIC_ALLOW_0RTT="false"
+    fi
     QUIC_INITIAL_STREAM_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 初始单流接收窗口 bytes" "${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}")"
     QUIC_MAX_STREAM_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 最大单流接收窗口 bytes" "${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}")"
     QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW="$(prompt_uint_value "QUIC 初始连接接收窗口 bytes" "${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}")"
@@ -387,6 +403,9 @@ write_naive_config() {
     "quic": {
       "disabled": $([[ "$ENABLE_QUIC" == "true" ]] && printf 'false' || printf 'true'),
       "congestion_control": $(json_string "$QUIC_CONGESTION_CONTROL"),
+      "keep_alive_period": $(json_string "$QUIC_KEEP_ALIVE_PERIOD"),
+      "allow_0rtt": $([[ "$QUIC_ALLOW_0RTT" == "true" ]] && printf 'true' || printf 'false'),
+      "max_incoming_streams": 0,
       "initial_stream_receive_window": $QUIC_INITIAL_STREAM_RECEIVE_WINDOW,
       "max_stream_receive_window": $QUIC_MAX_STREAM_RECEIVE_WINDOW,
       "initial_connection_receive_window": $QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW,
@@ -573,6 +592,8 @@ print_node_summary() {
   echo "QUIC 入站: $([[ "$ENABLE_QUIC" == "true" ]] && echo "开启 (quic://$NAIVE_DOMAIN:443)" || echo "关闭")"
   if [[ "$ENABLE_QUIC" == "true" ]]; then
     echo "QUIC CC:   ${QUIC_CONGESTION_CONTROL:-bbr}"
+    echo "QUIC PING: ${QUIC_KEEP_ALIVE_PERIOD:-关闭}"
+    echo "QUIC 0RTT: ${QUIC_ALLOW_0RTT:-true}"
     echo "QUIC 窗口: stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
   fi
   case "$OUTBOUND_TYPE" in
@@ -610,6 +631,8 @@ update_node_config() {
   info "当前 TCP 入站:      ${ENABLE_TCP:-true}"
   info "当前 QUIC 入站:     ${ENABLE_QUIC:-true}"
   info "当前 QUIC 拥塞控制: ${QUIC_CONGESTION_CONTROL:-bbr}"
+  info "当前 QUIC PING:     ${QUIC_KEEP_ALIVE_PERIOD:-关闭}"
+  info "当前 QUIC 0RTT:     ${QUIC_ALLOW_0RTT:-true}"
   info "当前 QUIC 窗口:     stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
   info "当前出站类型:       ${OUTBOUND_TYPE:-direct}"
   collect_node_config
