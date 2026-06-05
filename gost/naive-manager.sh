@@ -183,6 +183,19 @@ json_escape() {
 
 json_string() { printf '"%s"' "$(json_escape "$1")"; }
 
+# format_keepalive enabled day night → 人类可读的分时段保活摘要。
+# 关闭时返回「关闭」，开启时返回「白天 <day> / 夜间 <night>」（空/0 显示为「不发」）。
+format_keepalive() {
+  local enabled="$1" day="$2" night="$3"
+  if [[ "$enabled" != "true" ]]; then
+    echo "关闭"
+    return
+  fi
+  [[ -z "$day" || "$day" == "0" ]] && day="不发"
+  [[ -z "$night" || "$night" == "0" ]] && night="不发"
+  echo "白天 $day / 夜间 $night"
+}
+
 prompt_quic_congestion_control() {
   local default_value="${1:-bbr}" value
   while true; do
@@ -221,7 +234,15 @@ load_state() {
   ENABLE_TCP="true"
   ENABLE_QUIC="true"
   QUIC_CONGESTION_CONTROL="bbr"
-  QUIC_KEEP_ALIVE_PERIOD=""
+  # 分时段保活默认关：与 Go 代码默认一致，未显式开启时行为同改动前（不发保活），
+  # 抗检测最优。TCP 无指纹风险、QUIC 服务端 PING 有轻微指纹代价，都交给用户显式开。
+  # DAY/NIGHT 仅作为开启后的推荐预填值（白天 300s 省指纹、夜间 25s 顶 NAT 回收）。
+  TCP_KEEPALIVE_ENABLED="false"
+  TCP_KEEPALIVE_DAY="300s"
+  TCP_KEEPALIVE_NIGHT="25s"
+  QUIC_KEEPALIVE_ENABLED="false"
+  QUIC_KEEPALIVE_DAY="300s"
+  QUIC_KEEPALIVE_NIGHT="25s"
   QUIC_ALLOW_0RTT="true"
   QUIC_INITIAL_STREAM_RECEIVE_WINDOW="8388608"
   QUIC_MAX_STREAM_RECEIVE_WINDOW="67108864"
@@ -251,7 +272,12 @@ KEY_FILE=$(printf '%q' "$KEY_FILE")
 ENABLE_TCP=$(printf '%q' "$ENABLE_TCP")
 ENABLE_QUIC=$(printf '%q' "$ENABLE_QUIC")
 QUIC_CONGESTION_CONTROL=$(printf '%q' "$QUIC_CONGESTION_CONTROL")
-QUIC_KEEP_ALIVE_PERIOD=$(printf '%q' "$QUIC_KEEP_ALIVE_PERIOD")
+TCP_KEEPALIVE_ENABLED=$(printf '%q' "$TCP_KEEPALIVE_ENABLED")
+TCP_KEEPALIVE_DAY=$(printf '%q' "$TCP_KEEPALIVE_DAY")
+TCP_KEEPALIVE_NIGHT=$(printf '%q' "$TCP_KEEPALIVE_NIGHT")
+QUIC_KEEPALIVE_ENABLED=$(printf '%q' "$QUIC_KEEPALIVE_ENABLED")
+QUIC_KEEPALIVE_DAY=$(printf '%q' "$QUIC_KEEPALIVE_DAY")
+QUIC_KEEPALIVE_NIGHT=$(printf '%q' "$QUIC_KEEPALIVE_NIGHT")
 QUIC_ALLOW_0RTT=$(printf '%q' "$QUIC_ALLOW_0RTT")
 QUIC_INITIAL_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_INITIAL_STREAM_RECEIVE_WINDOW")
 QUIC_MAX_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_MAX_STREAM_RECEIVE_WINDOW")
@@ -325,10 +351,35 @@ collect_node_config() {
     warn "至少要保留一个入站，重置为两者都开"
     ENABLE_TCP="true"; ENABLE_QUIC="true"
   fi
+  if [[ "$ENABLE_TCP" == "true" ]]; then
+    printf "${CYAN}TCP 分时段保活（北京时间白天 03:00-19:00，夜间其余；回车采用当前值）${NC}\n"
+    if [[ "${TCP_KEEPALIVE_ENABLED:-false}" == "false" ]]; then
+      confirm_default_no "启用 TCP 分时段保活（白天长间隔省指纹，夜间短间隔顶 NAT 超时）" \
+        && TCP_KEEPALIVE_ENABLED="true" || TCP_KEEPALIVE_ENABLED="false"
+    else
+      confirm_default_yes "启用 TCP 分时段保活（白天长间隔省指纹，夜间短间隔顶 NAT 超时）" \
+        && TCP_KEEPALIVE_ENABLED="true" || TCP_KEEPALIVE_ENABLED="false"
+    fi
+    if [[ "$TCP_KEEPALIVE_ENABLED" == "true" ]]; then
+      TCP_KEEPALIVE_DAY="$(prompt_value "TCP 白天保活间隔（推荐 300s，空/0=该时段不保活）" "${TCP_KEEPALIVE_DAY:-300s}" false)"
+      TCP_KEEPALIVE_NIGHT="$(prompt_value "TCP 夜间保活间隔（推荐 25s，空/0=该时段不保活）" "${TCP_KEEPALIVE_NIGHT:-25s}" false)"
+    fi
+  fi
   if [[ "$ENABLE_QUIC" == "true" ]]; then
     printf "${CYAN}QUIC 性能参数（回车使用当前值）${NC}\n"
     QUIC_CONGESTION_CONTROL="$(prompt_quic_congestion_control "${QUIC_CONGESTION_CONTROL:-bbr}")"
-    QUIC_KEEP_ALIVE_PERIOD="$(prompt_value "QUIC 服务端 PING 间隔（空/0=关闭，示例 25s）" "${QUIC_KEEP_ALIVE_PERIOD:-}" false)"
+    printf "${CYAN}QUIC 分时段保活（北京时间白天 03:00-19:00，夜间其余；chromium-naive 不会主动 PING）${NC}\n"
+    if [[ "${QUIC_KEEPALIVE_ENABLED:-false}" == "false" ]]; then
+      confirm_default_no "启用 QUIC 分时段保活（白天长间隔省指纹，夜间短间隔顶 NAT 超时）" \
+        && QUIC_KEEPALIVE_ENABLED="true" || QUIC_KEEPALIVE_ENABLED="false"
+    else
+      confirm_default_yes "启用 QUIC 分时段保活（白天长间隔省指纹，夜间短间隔顶 NAT 超时）" \
+        && QUIC_KEEPALIVE_ENABLED="true" || QUIC_KEEPALIVE_ENABLED="false"
+    fi
+    if [[ "$QUIC_KEEPALIVE_ENABLED" == "true" ]]; then
+      QUIC_KEEPALIVE_DAY="$(prompt_value "QUIC 白天 PING 间隔（推荐 300s，空/0=该时段不发）" "${QUIC_KEEPALIVE_DAY:-300s}" false)"
+      QUIC_KEEPALIVE_NIGHT="$(prompt_value "QUIC 夜间 PING 间隔（推荐 25s，空/0=该时段不发）" "${QUIC_KEEPALIVE_NIGHT:-25s}" false)"
+    fi
     if [[ "${QUIC_ALLOW_0RTT:-true}" == "false" ]]; then
       if confirm_default_no "启用 QUIC 0-RTT（默认启用，对齐 Caddy/quic-go）"; then
         QUIC_ALLOW_0RTT="true"
@@ -395,6 +446,11 @@ write_naive_config() {
   "inbound": {
     "tcp": {
       "disabled": $([[ "$ENABLE_TCP" == "true" ]] && printf 'false' || printf 'true'),
+      "keep_alive": {
+        "enabled": $([[ "$TCP_KEEPALIVE_ENABLED" == "true" ]] && printf 'true' || printf 'false'),
+        "day_period": $(json_string "$TCP_KEEPALIVE_DAY"),
+        "night_period": $(json_string "$TCP_KEEPALIVE_NIGHT")
+      },
       "http2": {
         "max_upload_buffer_per_stream": 4194304,
         "max_upload_buffer_per_connection": 8388608
@@ -403,7 +459,11 @@ write_naive_config() {
     "quic": {
       "disabled": $([[ "$ENABLE_QUIC" == "true" ]] && printf 'false' || printf 'true'),
       "congestion_control": $(json_string "$QUIC_CONGESTION_CONTROL"),
-      "keep_alive_period": $(json_string "$QUIC_KEEP_ALIVE_PERIOD"),
+      "keep_alive": {
+        "enabled": $([[ "$QUIC_KEEPALIVE_ENABLED" == "true" ]] && printf 'true' || printf 'false'),
+        "day_period": $(json_string "$QUIC_KEEPALIVE_DAY"),
+        "night_period": $(json_string "$QUIC_KEEPALIVE_NIGHT")
+      },
       "allow_0rtt": $([[ "$QUIC_ALLOW_0RTT" == "true" ]] && printf 'true' || printf 'false'),
       "max_incoming_streams": 0,
       "initial_stream_receive_window": $QUIC_INITIAL_STREAM_RECEIVE_WINDOW,
@@ -590,9 +650,12 @@ print_node_summary() {
   echo "密码:     $NAIVE_PASSWORD"
   echo "TCP 入站: $([[ "$ENABLE_TCP" == "true" ]] && echo "开启 (https://$NAIVE_DOMAIN:443)" || echo "关闭")"
   echo "QUIC 入站: $([[ "$ENABLE_QUIC" == "true" ]] && echo "开启 (quic://$NAIVE_DOMAIN:443)" || echo "关闭")"
+  if [[ "$ENABLE_TCP" == "true" ]]; then
+    echo "TCP 保活: $(format_keepalive "${TCP_KEEPALIVE_ENABLED:-false}" "${TCP_KEEPALIVE_DAY:-300s}" "${TCP_KEEPALIVE_NIGHT:-25s}")"
+  fi
   if [[ "$ENABLE_QUIC" == "true" ]]; then
     echo "QUIC CC:   ${QUIC_CONGESTION_CONTROL:-bbr}"
-    echo "QUIC PING: ${QUIC_KEEP_ALIVE_PERIOD:-关闭}"
+    echo "QUIC 保活: $(format_keepalive "${QUIC_KEEPALIVE_ENABLED:-false}" "${QUIC_KEEPALIVE_DAY:-300s}" "${QUIC_KEEPALIVE_NIGHT:-25s}")"
     echo "QUIC 0RTT: ${QUIC_ALLOW_0RTT:-true}"
     echo "QUIC 窗口: stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
   fi
@@ -630,8 +693,9 @@ update_node_config() {
   info "当前伪装网站:       ${MASQUERADE_URL:-未设置}"
   info "当前 TCP 入站:      ${ENABLE_TCP:-true}"
   info "当前 QUIC 入站:     ${ENABLE_QUIC:-true}"
+  info "当前 TCP 保活:      $(format_keepalive "${TCP_KEEPALIVE_ENABLED:-false}" "${TCP_KEEPALIVE_DAY:-300s}" "${TCP_KEEPALIVE_NIGHT:-25s}")"
   info "当前 QUIC 拥塞控制: ${QUIC_CONGESTION_CONTROL:-bbr}"
-  info "当前 QUIC PING:     ${QUIC_KEEP_ALIVE_PERIOD:-关闭}"
+  info "当前 QUIC 保活:     $(format_keepalive "${QUIC_KEEPALIVE_ENABLED:-false}" "${QUIC_KEEPALIVE_DAY:-300s}" "${QUIC_KEEPALIVE_NIGHT:-25s}")"
   info "当前 QUIC 0RTT:     ${QUIC_ALLOW_0RTT:-true}"
   info "当前 QUIC 窗口:     stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
   info "当前出站类型:       ${OUTBOUND_TYPE:-direct}"
