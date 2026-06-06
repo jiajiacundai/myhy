@@ -109,12 +109,47 @@ detect_public_ip() {
 }
 
 detect_geo_json() {
+  local ip="$1"
+  [[ -n "$ip" ]] || return 1
+
+  curl -fsS --max-time 10 "https://ipapi.co/${ip}/json/" 2>/dev/null \
+    || curl -fsS --max-time 10 "https://ipinfo.io/${ip}/json" 2>/dev/null \
+    || curl -fsS --max-time 10 "https://api.ip.sb/geoip/${ip}" 2>/dev/null
+}
+
+extract_country_code() {
+  grep -o '"'"$1"'":"[A-Z][A-Z]"' | head -n 1 | sed 's/.*:"\([A-Z][A-Z]\)"/\1/'
+}
+
+detect_youtube_info() {
   local version="$1"
   local curl_arg="-4"
+  local body region sent_cn="0" sent_label="未知"
   [[ "$version" == "6" ]] && curl_arg="-6"
 
-  curl "$curl_arg" -fsS --max-time 10 https://api.ip.sb/geoip 2>/dev/null \
-    || curl "$curl_arg" -fsS --max-time 10 https://ipinfo.io/json 2>/dev/null
+  body="$(curl "$curl_arg" -A "Mozilla/5.0" -fsSL --max-time 15 https://www.youtube.com/premium 2>/dev/null | head -c 2097152)"
+  [[ -n "$body" ]] || return 0
+
+  if printf "%s" "$body" | grep -q 'www\.google\.cn'; then
+    sent_cn="1"
+  fi
+
+  region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "countryCode")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "GL")"
+
+  if [[ "$sent_cn" == "1" && -z "$region" ]]; then
+    region="CN"
+  fi
+
+  if [[ "$sent_cn" == "1" || "$region" == "CN" ]]; then
+    sent_label="是"
+  elif [[ -n "$region" ]]; then
+    sent_label="否"
+  fi
+
+  printf "%s\t%s" "$region" "$sent_label"
 }
 
 json_value() {
@@ -125,30 +160,48 @@ json_value() {
 print_exit_info() {
   local version="$1"
   local label="$2"
-  local json ip country region city isp org asn timezone
+  local json ip country country_code region city isp org asn timezone youtube_info youtube_region youtube_sent
 
   printf "\n%s%s 出口信息%s\n" "$C_BOLD" "$label" "$C_RESET"
-  json="$(detect_geo_json "$version")"
+  ip="$(detect_public_ip "$version")"
+  youtube_info="$(detect_youtube_info "$version")"
+  youtube_region="${youtube_info%%$'\t'*}"
+  youtube_sent="${youtube_info#*$'\t'}"
+  [[ "$youtube_sent" == "$youtube_info" ]] && youtube_sent="未知"
+  json="$(detect_geo_json "$ip")"
+
   if [[ -z "$json" ]]; then
-    ip="$(detect_public_ip "$version")"
     if [[ -n "$ip" ]]; then
       printf "IP: %s\n" "$ip"
       warn "${label} 地理信息接口不可用，仅显示出口 IP。"
     else
       warn "${label} 出口不可用或外部接口无法访问。"
     fi
+    printf "YouTube 区域: %s\n" "${youtube_region:-未识别}"
+    printf "YouTube 送中: %s\n" "${youtube_sent:-未知}"
     return 0
   fi
 
   ip="$(printf "%s" "$json" | json_value "ip")"
-  country="$(printf "%s" "$json" | json_value "country")"
-  [[ -z "$country" ]] && country="$(printf "%s" "$json" | json_value "country_code")"
+  [[ -z "$ip" ]] && ip="$(printf "%s" "$json" | json_value "query")"
+  country="$(printf "%s" "$json" | json_value "country_name")"
+  country_code="$(printf "%s" "$json" | json_value "country_code")"
+  [[ -z "$country_code" ]] && country_code="$(printf "%s" "$json" | json_value "countryCode")"
+  [[ -z "$country" ]] && country="$(printf "%s" "$json" | json_value "country")"
+  if [[ -n "$country" && -n "$country_code" && "$country" != "$country_code" ]]; then
+    country="${country} (${country_code})"
+  elif [[ -z "$country" ]]; then
+    country="$country_code"
+  fi
   region="$(printf "%s" "$json" | json_value "region")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$json" | json_value "regionName")"
   city="$(printf "%s" "$json" | json_value "city")"
   isp="$(printf "%s" "$json" | json_value "isp")"
   org="$(printf "%s" "$json" | json_value "organization")"
   [[ -z "$org" ]] && org="$(printf "%s" "$json" | json_value "org")"
-  asn="$(printf "%s" "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/AS\1/p' | head -n 1)"
+  [[ -z "$org" ]] && org="$(printf "%s" "$json" | json_value "org_name")"
+  asn="$(printf "%s" "$json" | json_value "asn")"
+  [[ -z "$asn" ]] && asn="$(printf "%s" "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/AS\1/p' | head -n 1)"
   timezone="$(printf "%s" "$json" | json_value "timezone")"
 
   printf "IP: %s\n" "${ip:-未知}"
@@ -158,6 +211,8 @@ print_exit_info() {
   printf "运营商/组织: %s\n" "${isp:-${org:-未知}}"
   [[ -n "$asn" ]] && printf "ASN: %s\n" "$asn"
   [[ -n "$timezone" ]] && printf "时区: %s\n" "$timezone"
+  printf "YouTube 区域: %s\n" "${youtube_region:-未识别}"
+  printf "YouTube 送中: %s\n" "${youtube_sent:-未知}"
 }
 
 detect_current_exit() {
