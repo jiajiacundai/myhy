@@ -9,6 +9,7 @@ SERVICE_NAME="ip-sentinel.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 BIN_PATH="${INSTALL_DIR}/ip-sentinel-go"
 IP_FILE="${INSTALL_DIR}/ips.txt"
+PROBE_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'
@@ -83,7 +84,7 @@ read_prompt() {
 
 status_value() {
   case "$1" in
-    是|失败|不可用|未安装|未运行)
+    是|失败|不可用|未安装|未运行|疑似*)
       printf "%s%s%s" "$C_RED" "$1" "$C_RESET"
       ;;
     否|成功|可用|已运行|已配置)
@@ -173,57 +174,204 @@ release_url() {
 detect_public_ip() {
   local version="$1"
   local curl_arg="-4"
+  local endpoint output
   [[ "$version" == "6" ]] && curl_arg="-6"
 
-  {
-    curl "$curl_arg" -fsS --max-time 8 https://api.ipify.org 2>/dev/null \
-    || curl "$curl_arg" -fsS --max-time 8 https://api.ip.sb/ip 2>/dev/null \
-    || curl "$curl_arg" -fsS --max-time 8 https://icanhazip.com 2>/dev/null
-  } | tr -d '[:space:]'
+  local endpoints=(
+    "https://api.ip.sb/ip"
+    "https://ifconfig.me/ip"
+    "https://icanhazip.com/"
+    "https://api64.ipify.org"
+  )
+  if [[ "$version" == "4" ]]; then
+    endpoints+=("https://api.ipify.org")
+  else
+    endpoints+=("https://ipv6.icanhazip.com/")
+  fi
+
+  for endpoint in "${endpoints[@]}"; do
+    output="$(curl "$curl_arg" -fsS --max-time 6 "$endpoint" 2>/dev/null | tr -d '[:space:]')"
+    if [[ "$version" == "4" ]]; then
+      validate_ipv4 "$output" && { printf "%s" "$output"; return 0; }
+    else
+      validate_ipv6 "$output" && { printf "%s" "$output"; return 0; }
+    fi
+  done
 }
 
-detect_geo_json() {
+geo_json_usable() {
+  local json="$1"
+  [[ -n "$json" ]] || return 1
+  printf "%s" "$json" | grep -Eq '"(ip|query|country|country_name|country_code|countryCode)"[[:space:]]*:'
+}
+
+detect_geo_result() {
   local ip="$1"
+  local source url json
   [[ -n "$ip" ]] || return 1
 
-  curl -fsS --max-time 10 "https://ipapi.co/${ip}/json/" 2>/dev/null \
-    || curl -fsS --max-time 10 "https://ipinfo.io/${ip}/json" 2>/dev/null \
-    || curl -fsS --max-time 10 "https://api.ip.sb/geoip/${ip}" 2>/dev/null
+  while IFS='|' read -r source url; do
+    [[ -n "$source" && -n "$url" ]] || continue
+    json="$(curl -fsS --max-time 8 "$url" 2>/dev/null)"
+    if geo_json_usable "$json"; then
+      printf "%s\n%s" "$source" "$json"
+      return 0
+    fi
+  done <<EOF
+ipapi.co|https://ipapi.co/${ip}/json/
+ipinfo.io|https://ipinfo.io/${ip}/json
+api.ip.sb|https://api.ip.sb/geoip/${ip}
+ip-api.com|http://ip-api.com/json/${ip}?fields=status,message,query,country,countryCode,regionName,city,isp,org,as,timezone
+EOF
 }
 
 extract_country_code() {
-  grep -o '"'"$1"'":"[A-Z][A-Z]"' | head -n 1 | sed 's/.*:"\([A-Z][A-Z]\)"/\1/'
+  grep -Eo '"'"$1"'":"[A-Za-z]{2}"' | head -n 1 | sed 's/.*:"\([A-Za-z][A-Za-z]\)"/\1/' | tr 'a-z' 'A-Z'
 }
 
-detect_youtube_info() {
+google_domain_region() {
+  local domain="$1"
+  local last_ext
+  case "$domain" in
+    com) printf "US" ;;
+    com.hk) printf "HK" ;;
+    com.tw) printf "TW" ;;
+    co.jp) printf "JP" ;;
+    co.uk) printf "GB" ;;
+    co.kr) printf "KR" ;;
+    co.in) printf "IN" ;;
+    co.id) printf "ID" ;;
+    co.th) printf "TH" ;;
+    com.sg) printf "SG" ;;
+    com.my) printf "MY" ;;
+    com.au) printf "AU" ;;
+    com.br) printf "BR" ;;
+    com.mx) printf "MX" ;;
+    com.ar) printf "AR" ;;
+    co.za) printf "ZA" ;;
+    cn) printf "CN" ;;
+    "")
+      ;;
+    *)
+      last_ext="$(printf "%s" "$domain" | awk -F'.' '{print $NF}' | tr 'a-z' 'A-Z')"
+      if [[ ${#last_ext} -eq 2 ]]; then
+        printf "%s" "$last_ext"
+      else
+        printf "US"
+      fi
+      ;;
+  esac
+}
+
+detect_google_jump_region() {
   local version="$1"
   local curl_arg="-4"
-  local body region sent_cn="0" sent_label="未知"
+  local headers location domain
   [[ "$version" == "6" ]] && curl_arg="-6"
 
-  body="$(curl "$curl_arg" -A "Mozilla/5.0" -fsSL --max-time 15 https://www.youtube.com/premium 2>/dev/null | head -c 2097152)"
+  headers="$(curl "$curl_arg" -sI --max-time 10 -A "$PROBE_UA" http://www.google.com/ 2>/dev/null)"
+  [[ -n "$headers" ]] || return 0
+
+  location="$(printf "%s" "$headers" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/\r$/, ""); print; exit}')"
+  if [[ -z "$location" ]]; then
+    printf "未跳转"
+  elif [[ "$location" == *".google.cn"* || "$location" == *"gl=CN"* || "$location" == *"gl=cn"* ]]; then
+    printf "CN"
+  elif [[ "$location" == *"gl="* ]]; then
+    printf "%s" "$location" | grep -Eo 'gl=[A-Za-z]{2}' | head -n 1 | cut -d= -f2 | tr 'a-z' 'A-Z'
+  else
+    domain="$(printf "%s" "$location" | grep -Eo 'google\.[A-Za-z.]+' | head -n 1 | sed 's/google\.//' | tr 'A-Z' 'a-z')"
+    google_domain_region "$domain"
+  fi
+}
+
+detect_youtube_page_region() {
+  local version="$1"
+  local url="$2"
+  local curl_arg="-4"
+  local body region
+  [[ "$version" == "6" ]] && curl_arg="-6"
+
+  body="$(curl "$curl_arg" -A "$PROBE_UA" -fsSL --max-time 12 "$url" 2>/dev/null | head -c 2097152)"
   [[ -n "$body" ]] || return 0
 
   if printf "%s" "$body" | grep -q 'www\.google\.cn'; then
-    sent_cn="1"
+    printf "CN"
+    return 0
   fi
 
-  region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
+  region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
   [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "countryCode")"
-  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
   [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "GL")"
+  printf "%s" "$region"
+}
 
-  if [[ "$sent_cn" == "1" && -z "$region" ]]; then
-    region="CN"
-  fi
+detect_google_info() {
+  local version="$1"
+  local jump premium music primary sent_label="未知" valid=0 region
 
-  if [[ "$sent_cn" == "1" || "$region" == "CN" ]]; then
-    sent_label="是"
-  elif [[ -n "$region" ]]; then
+  jump="$(detect_google_jump_region "$version")"
+  premium="$(detect_youtube_page_region "$version" "https://www.youtube.com/premium")"
+  music="$(detect_youtube_page_region "$version" "https://music.youtube.com/")"
+
+  for region in "$jump" "$premium" "$music"; do
+    [[ "$region" =~ ^[A-Z]{2}$ ]] || continue
+    ((valid++))
+    [[ "$region" == "CN" ]] && sent_label="是"
+  done
+
+  if [[ "$sent_label" != "是" && "$valid" -gt 0 ]]; then
     sent_label="否"
   fi
 
-  printf "%s\t%s" "$region" "$sent_label"
+  primary="${premium:-$music}"
+  [[ -z "$primary" && "$jump" =~ ^[A-Z]{2}$ ]] && primary="$jump"
+  printf "%s\t%s\t%s\t%s\t%s" "$jump" "$premium" "$music" "$primary" "$sent_label"
+}
+
+route_device() {
+  local version="$1"
+  if [[ "$version" == "4" ]]; then
+    ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}'
+  else
+    ip -6 route get 2001:4860:4860::8888 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}'
+  fi
+}
+
+exit_route_warning() {
+  local version="$1"
+  local ip="$2"
+  local dev="$3"
+  [[ -n "$ip" ]] || return 0
+
+  if [[ "$dev" =~ ^(warp|wgcf|tun|tap|docker|br-|lo) ]]; then
+    printf "疑似虚拟/WARP出口: %s" "$dev"
+    return 0
+  fi
+
+  if [[ "$version" == "4" ]]; then
+    if [[ "$ip" =~ ^104\.28\. ]] || [[ "$ip" =~ ^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\. ]]; then
+      printf "疑似内网/中转出口"
+    fi
+  else
+    if [[ "$ip" =~ ^fe80:|^::1$ ]]; then
+      printf "疑似本地链路 IPv6"
+    fi
+  fi
+}
+
+sentinel_sent_value() {
+  local sent="$1"
+  local sent_label
+  if [[ "$sent" == "是" ]]; then
+    sent_label="是"
+  elif [[ "$sent" == "否" ]]; then
+    sent_label="否"
+  else
+    sent_label="未知"
+  fi
+  printf "%s" "$sent_label"
 }
 
 json_value() {
@@ -234,25 +382,36 @@ json_value() {
 print_exit_info() {
   local version="$1"
   local label="$2"
-  local json ip country country_code region city isp org asn timezone youtube_info youtube_region youtube_sent
+  local geo_result geo_source json ip country country_code region city isp org asn timezone
+  local google_info google_jump youtube_premium youtube_music google_region google_sent
+  local dev route_warn
 
   ui_section "${label} 出口信息"
   ip="$(detect_public_ip "$version")"
-  youtube_info="$(detect_youtube_info "$version")"
-  youtube_region="${youtube_info%%$'\t'*}"
-  youtube_sent="${youtube_info#*$'\t'}"
-  [[ "$youtube_sent" == "$youtube_info" ]] && youtube_sent="未知"
-  json="$(detect_geo_json "$ip")"
+  dev="$(route_device "$version")"
+  route_warn="$(exit_route_warning "$version" "$ip" "$dev")"
+  google_info="$(detect_google_info "$version")"
+  IFS=$'\t' read -r google_jump youtube_premium youtube_music google_region google_sent <<< "$google_info"
+  google_sent="$(sentinel_sent_value "$google_sent")"
+  geo_result="$(detect_geo_result "$ip")"
+  geo_source="${geo_result%%$'\n'*}"
+  json="${geo_result#*$'\n'}"
+  [[ "$json" == "$geo_result" ]] && json=""
 
   if [[ -z "$json" ]]; then
     if [[ -n "$ip" ]]; then
       ui_kv "IP" "$ip"
+      [[ -n "$dev" ]] && ui_kv "路由网卡" "$dev"
+      [[ -n "$route_warn" ]] && ui_kv "路由警告" "$(status_value "$route_warn")"
       warn "${label} 地理信息接口不可用，仅显示出口 IP。"
     else
       warn "${label} 出口不可用或外部接口无法访问。"
     fi
-    ui_kv "YouTube 区域" "${youtube_region:-未识别}"
-    ui_kv "YouTube 送中" "$(status_value "${youtube_sent:-未知}")"
+    ui_kv "Google Jump" "${google_jump:-未识别}"
+    ui_kv "YT Premium" "${youtube_premium:-未识别}"
+    ui_kv "YT Music" "${youtube_music:-未识别}"
+    ui_kv "综合区域" "${google_region:-未识别}"
+    ui_kv "三探针送中" "$(status_value "${google_sent:-未知}")"
     return 0
   fi
 
@@ -275,18 +434,25 @@ print_exit_info() {
   [[ -z "$org" ]] && org="$(printf "%s" "$json" | json_value "org")"
   [[ -z "$org" ]] && org="$(printf "%s" "$json" | json_value "org_name")"
   asn="$(printf "%s" "$json" | json_value "asn")"
+  [[ -z "$asn" ]] && asn="$(printf "%s" "$json" | json_value "as")"
   [[ -z "$asn" ]] && asn="$(printf "%s" "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/AS\1/p' | head -n 1)"
   timezone="$(printf "%s" "$json" | json_value "timezone")"
 
   ui_kv "IP" "${ip:-未知}"
+  [[ -n "$dev" ]] && ui_kv "路由网卡" "$dev"
+  [[ -n "$route_warn" ]] && ui_kv "路由警告" "$(status_value "$route_warn")"
+  ui_kv "地理数据源" "${geo_source:-未知}"
   ui_kv "国家/地区" "${country:-未知}"
   ui_kv "省州" "${region:-未知}"
   ui_kv "城市" "${city:-未知}"
   ui_kv "运营商/组织" "${isp:-${org:-未知}}"
   [[ -n "$asn" ]] && ui_kv "ASN" "$asn"
   [[ -n "$timezone" ]] && ui_kv "时区" "$timezone"
-  ui_kv "YouTube 区域" "${youtube_region:-未识别}"
-  ui_kv "YouTube 送中" "$(status_value "${youtube_sent:-未知}")"
+  ui_kv "Google Jump" "${google_jump:-未识别}"
+  ui_kv "YT Premium" "${youtube_premium:-未识别}"
+  ui_kv "YT Music" "${youtube_music:-未识别}"
+  ui_kv "综合区域" "${google_region:-未识别}"
+  ui_kv "三探针送中" "$(status_value "${google_sent:-未知}")"
 }
 
 detect_current_exit() {
