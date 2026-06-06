@@ -16,7 +16,9 @@ if [[ -t 1 ]]; then
   C_GREEN=$'\033[32m'
   C_YELLOW=$'\033[33m'
   C_BLUE=$'\033[34m'
+  C_MAGENTA=$'\033[35m'
   C_CYAN=$'\033[36m'
+  C_DIM=$'\033[2m'
   C_BOLD=$'\033[1m'
 else
   C_RESET=""
@@ -24,7 +26,9 @@ else
   C_GREEN=""
   C_YELLOW=""
   C_BLUE=""
+  C_MAGENTA=""
   C_CYAN=""
+  C_DIM=""
   C_BOLD=""
 fi
 
@@ -33,8 +37,78 @@ ok() { printf "%s[成功]%s %s\n" "$C_GREEN" "$C_RESET" "$*"; }
 warn() { printf "%s[警告]%s %s\n" "$C_YELLOW" "$C_RESET" "$*"; }
 err() { printf "%s[错误]%s %s\n" "$C_RED" "$C_RESET" "$*"; }
 
+ui_line() {
+  printf "%s%s%s\n" "$C_CYAN" "========================================" "$C_RESET"
+}
+
+ui_rule() {
+  printf "%s%s%s\n" "$C_DIM" "----------------------------------------" "$C_RESET"
+}
+
+ui_title() {
+  local title="$1"
+  printf "\n"
+  ui_line
+  printf "%s%s%s\n" "$C_BOLD$C_CYAN" "  ${title}" "$C_RESET"
+  ui_line
+}
+
+ui_section() {
+  local title="$1"
+  printf "\n%s%s%s\n" "$C_BOLD$C_MAGENTA" ">> ${title}" "$C_RESET"
+  ui_rule
+}
+
+ui_kv() {
+  local key="$1"
+  local value="${2:-未知}"
+  printf "  %s%-16s%s %b\n" "$C_BLUE" "${key}:" "$C_RESET" "$value"
+}
+
+ui_menu_item() {
+  local num="$1"
+  local text="$2"
+  printf "  %s%2s%s  %s\n" "$C_GREEN" "$num." "$C_RESET" "$text"
+}
+
+ui_prompt() {
+  printf "%s%s%s" "$C_GREEN" "$1" "$C_RESET"
+}
+
+read_prompt() {
+  local __var="$1"
+  local prompt="$2"
+  read -r -p "$(ui_prompt "$prompt")" "$__var"
+}
+
+status_value() {
+  case "$1" in
+    是|失败|不可用|未安装|未运行)
+      printf "%s%s%s" "$C_RED" "$1" "$C_RESET"
+      ;;
+    否|成功|可用|已运行|已配置)
+      printf "%s%s%s" "$C_GREEN" "$1" "$C_RESET"
+      ;;
+    *)
+      printf "%s%s%s" "$C_YELLOW" "${1:-未知}" "$C_RESET"
+      ;;
+  esac
+}
+
+service_state() {
+  command -v systemctl >/dev/null 2>&1 || { printf "不可用"; return 0; }
+  systemctl cat "$SERVICE_NAME" >/dev/null 2>&1 || { printf "未安装"; return 0; }
+  systemctl is-active --quiet "$SERVICE_NAME" && { printf "已运行"; return 0; }
+  printf "未运行"
+}
+
+config_state() {
+  [[ -s "$IP_FILE" ]] && { printf "已配置"; return 0; }
+  printf "未配置"
+}
+
 pause() {
-  read -r -p "按回车继续..." _
+  read_prompt _ "按回车继续..."
 }
 
 require_root() {
@@ -162,7 +236,7 @@ print_exit_info() {
   local label="$2"
   local json ip country country_code region city isp org asn timezone youtube_info youtube_region youtube_sent
 
-  printf "\n%s%s 出口信息%s\n" "$C_BOLD" "$label" "$C_RESET"
+  ui_section "${label} 出口信息"
   ip="$(detect_public_ip "$version")"
   youtube_info="$(detect_youtube_info "$version")"
   youtube_region="${youtube_info%%$'\t'*}"
@@ -172,13 +246,13 @@ print_exit_info() {
 
   if [[ -z "$json" ]]; then
     if [[ -n "$ip" ]]; then
-      printf "IP: %s\n" "$ip"
+      ui_kv "IP" "$ip"
       warn "${label} 地理信息接口不可用，仅显示出口 IP。"
     else
       warn "${label} 出口不可用或外部接口无法访问。"
     fi
-    printf "YouTube 区域: %s\n" "${youtube_region:-未识别}"
-    printf "YouTube 送中: %s\n" "${youtube_sent:-未知}"
+    ui_kv "YouTube 区域" "${youtube_region:-未识别}"
+    ui_kv "YouTube 送中" "$(status_value "${youtube_sent:-未知}")"
     return 0
   fi
 
@@ -204,20 +278,20 @@ print_exit_info() {
   [[ -z "$asn" ]] && asn="$(printf "%s" "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/AS\1/p' | head -n 1)"
   timezone="$(printf "%s" "$json" | json_value "timezone")"
 
-  printf "IP: %s\n" "${ip:-未知}"
-  printf "国家/地区: %s\n" "${country:-未知}"
-  printf "省州: %s\n" "${region:-未知}"
-  printf "城市: %s\n" "${city:-未知}"
-  printf "运营商/组织: %s\n" "${isp:-${org:-未知}}"
-  [[ -n "$asn" ]] && printf "ASN: %s\n" "$asn"
-  [[ -n "$timezone" ]] && printf "时区: %s\n" "$timezone"
-  printf "YouTube 区域: %s\n" "${youtube_region:-未识别}"
-  printf "YouTube 送中: %s\n" "${youtube_sent:-未知}"
+  ui_kv "IP" "${ip:-未知}"
+  ui_kv "国家/地区" "${country:-未知}"
+  ui_kv "省州" "${region:-未知}"
+  ui_kv "城市" "${city:-未知}"
+  ui_kv "运营商/组织" "${isp:-${org:-未知}}"
+  [[ -n "$asn" ]] && ui_kv "ASN" "$asn"
+  [[ -n "$timezone" ]] && ui_kv "时区" "$timezone"
+  ui_kv "YouTube 区域" "${youtube_region:-未识别}"
+  ui_kv "YouTube 送中" "$(status_value "${youtube_sent:-未知}")"
 }
 
 detect_current_exit() {
   install_dependencies || return 1
-  printf "\n%s检测当前出口信息%s\n" "$C_BOLD" "$C_RESET"
+  ui_title "检测当前出口信息"
   print_exit_info "4" "IPv4"
   print_exit_info "6" "IPv6"
 }
@@ -259,8 +333,8 @@ print_current_config() {
   mapfile -t v4s < <(get_ips "v4")
   mapfile -t v6s < <(get_ips "v6")
 
-  printf "%s当前 IPv4:%s %s\n" "$C_BLUE" "$C_RESET" "$(join_list "${v4s[@]}")"
-  printf "%s当前 IPv6:%s %s\n" "$C_BLUE" "$C_RESET" "$(join_list "${v6s[@]}")"
+  ui_kv "当前 IPv4" "$(join_list "${v4s[@]}")"
+  ui_kv "当前 IPv6" "$(join_list "${v6s[@]}")"
 }
 
 split_input_ips() {
@@ -282,7 +356,7 @@ prompt_stack_ips() {
       warn "自动探测 ${label}: 未获取"
     fi
 
-    read -r -p "请输入 ${label}（回车使用自动探测；输入 1 不填入；多个用逗号分隔）: " input
+    read_prompt input "请输入 ${label}（回车使用自动探测；输入 1 不填入；多个用逗号分隔）: "
     if [[ "$input" == "1" ]]; then
       PROMPT_RESULT=()
       return 0
@@ -415,7 +489,7 @@ install_ip_sentinel() {
   require_systemd || return 1
   install_dependencies || return 1
 
-  printf "\n%s安装 IP-Sentinel%s\n" "$C_BOLD" "$C_RESET"
+  ui_title "安装 IP-Sentinel"
   prompt_full_config
   download_and_install || return 1
   write_ip_file
@@ -453,7 +527,7 @@ add_ip() {
   local input token exists
   mkdir -p "$INSTALL_DIR"
   while true; do
-    read -r -p "请输入要添加的 ${label}（多个用逗号分隔，0 返回）: " input
+    read_prompt input "请输入要添加的 ${label}（多个用逗号分隔，0 返回）: "
     [[ "$input" == "0" ]] && return 0
     [[ -n "$input" ]] || continue
 
@@ -489,14 +563,14 @@ delete_ip() {
     return 0
   fi
 
-  printf "\n%s当前 ${label} 列表%s\n" "$C_BOLD" "$C_RESET"
+  ui_section "当前 ${label} 列表"
   local i
   for i in "${!ips[@]}"; do
-    printf "%s. %s\n" "$((i + 1))" "${ips[$i]}"
+    ui_menu_item "$((i + 1))" "${ips[$i]}"
   done
-  printf "0. 返回上一级\n"
+  ui_menu_item "0" "返回上一级"
 
-  read -r -p "请选择要删除的编号: " choice
+  read_prompt choice "请选择要删除的编号: "
   [[ "$choice" == "0" ]] && return 0
   if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#ips[@]} )); then
     err "无效编号。"
@@ -504,7 +578,7 @@ delete_ip() {
   fi
 
   ip="${ips[$((choice - 1))]}"
-  read -r -p "确认删除 ${ip}? [y/N]: " confirm
+  read_prompt confirm "确认删除 ${ip}? [y/N]: "
   if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     warn "已取消删除。"
     return 0
@@ -522,7 +596,7 @@ update_config() {
   require_root
   require_systemd || return 1
   install_dependencies || return 1
-  printf "\n%s更新 IP-Sentinel 配置%s\n" "$C_BOLD" "$C_RESET"
+  ui_title "更新 IP-Sentinel 配置"
   prompt_full_config
   write_ip_file
   generate_service
@@ -533,7 +607,8 @@ uninstall_ip_sentinel() {
   require_root
   local confirm delete_dir
 
-  read -r -p "是否卸载 IP-Sentinel 服务? [y/N]: " confirm
+  ui_title "卸载 IP-Sentinel"
+  read_prompt confirm "是否卸载 IP-Sentinel 服务? [y/N]: "
   if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
     warn "已取消卸载。"
     return 0
@@ -545,7 +620,7 @@ uninstall_ip_sentinel() {
   systemctl daemon-reload 2>/dev/null || true
   ok "已卸载 systemd 服务。"
 
-  read -r -p "是否删除 ${INSTALL_DIR} 目录? [y/N]: " delete_dir
+  read_prompt delete_dir "是否删除 ${INSTALL_DIR} 目录? [y/N]: "
   if [[ "$delete_dir" =~ ^[Yy]$ ]]; then
     rm -rf "$INSTALL_DIR"
     ok "已删除 ${INSTALL_DIR}"
@@ -556,12 +631,12 @@ uninstall_ip_sentinel() {
 
 manage_menu() {
   while true; do
-    printf "\n%s管理 IP-Sentinel%s\n" "$C_BOLD" "$C_RESET"
-    printf "1. 关闭 IP-Sentinel\n"
-    printf "2. 重启 IP-Sentinel\n"
-    printf "3. 查看 IP-Sentinel 状态\n"
-    printf "0. 返回上一级\n"
-    read -r -p "请选择: " choice
+    ui_title "管理 IP-Sentinel"
+    ui_menu_item "1" "关闭 IP-Sentinel"
+    ui_menu_item "2" "重启 IP-Sentinel"
+    ui_menu_item "3" "查看 IP-Sentinel 状态"
+    ui_menu_item "0" "返回上一级"
+    read_prompt choice "请选择: "
     case "$choice" in
       1) stop_ip_sentinel; pause ;;
       2) restart_ip_sentinel; pause ;;
@@ -574,15 +649,16 @@ manage_menu() {
 
 config_menu() {
   while true; do
-    printf "\n%s管理 IP-Sentinel 配置%s\n" "$C_BOLD" "$C_RESET"
+    ui_title "管理 IP-Sentinel 配置"
     print_current_config
-    printf "1. 添加 ipv4\n"
-    printf "2. 删除 ipv4\n"
-    printf "3. 添加 ipv6\n"
-    printf "4. 删除 ipv6\n"
-    printf "5. 更新 IP-Sentinel 配置\n"
-    printf "0. 返回上一级\n"
-    read -r -p "请选择: " choice
+    printf "\n"
+    ui_menu_item "1" "添加 IPv4"
+    ui_menu_item "2" "删除 IPv4"
+    ui_menu_item "3" "添加 IPv6"
+    ui_menu_item "4" "删除 IPv6"
+    ui_menu_item "5" "更新 IP-Sentinel 配置"
+    ui_menu_item "0" "返回上一级"
+    read_prompt choice "请选择: "
     case "$choice" in
       1) add_ip "v4" "IPv4"; pause ;;
       2) delete_ip "v4" "IPv4"; pause ;;
@@ -598,19 +674,19 @@ config_menu() {
 main_menu() {
   while true; do
     clear 2>/dev/null || true
-    printf "%s========================================%s\n" "$C_CYAN" "$C_RESET"
-    printf "%s       IP-Sentinel 彩色管理脚本%s\n" "$C_BOLD" "$C_RESET"
-    printf "%s========================================%s\n" "$C_CYAN" "$C_RESET"
-    printf "安装目录: %s\n" "$INSTALL_DIR"
-    printf "服务名称: %s\n" "$SERVICE_NAME"
+    ui_title "IP-Sentinel 彩色管理脚本"
+    ui_kv "安装目录" "$INSTALL_DIR"
+    ui_kv "服务名称" "$SERVICE_NAME"
+    ui_kv "服务状态" "$(status_value "$(service_state)")"
+    ui_kv "配置状态" "$(status_value "$(config_state)")"
     printf "\n"
-    printf "1. 安装 IP-Sentinel\n"
-    printf "2. 管理 IP-Sentinel\n"
-    printf "3. 管理 IP-Sentinel 配置\n"
-    printf "4. 检测当前出口信息\n"
-    printf "5. 卸载 IP-Sentinel\n"
-    printf "0. 退出\n"
-    read -r -p "请选择: " choice
+    ui_menu_item "1" "安装 IP-Sentinel"
+    ui_menu_item "2" "管理 IP-Sentinel"
+    ui_menu_item "3" "管理 IP-Sentinel 配置"
+    ui_menu_item "4" "检测当前出口信息"
+    ui_menu_item "5" "卸载 IP-Sentinel"
+    ui_menu_item "0" "退出"
+    read_prompt choice "请选择: "
     case "$choice" in
       1) install_ip_sentinel; pause ;;
       2) manage_menu ;;
