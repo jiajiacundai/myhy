@@ -9,6 +9,7 @@ SERVICE_NAME="ip-sentinel.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 BIN_PATH="${INSTALL_DIR}/ip-sentinel-go"
 IP_FILE="${INSTALL_DIR}/ips.txt"
+STATUS_FILE="${INSTALL_DIR}/status.json"
 
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'
@@ -192,34 +193,50 @@ detect_geo_json() {
 }
 
 extract_country_code() {
-  grep -o '"'"$1"'":"[A-Z][A-Z]"' | head -n 1 | sed 's/.*:"\([A-Z][A-Z]\)"/\1/'
+  local key="$1"
+  grep -Eo '"'"${key}"'"[[:space:]]*:[[:space:]]*"[A-Za-z]{2}"' \
+    | head -n 1 \
+    | sed -E 's/.*"([A-Za-z]{2})"$/\1/' \
+    | tr 'a-z' 'A-Z'
 }
 
 detect_youtube_info() {
   local version="$1"
   local curl_arg="-4"
-  local body region sent_cn="0" sent_label="未知"
+  local response body final_url region sent_label="未知"
+  local browser_ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  local youtube_cookie="YSC=BiCUU3-5Gdk; CONSENT=YES+cb.20220301-11-p0.en+FX+700; GPS=1; VISITOR_INFO1_LIVE=4VwPMkB7W5A; PREF=tz=Asia.Shanghai; _gcl_au=1.1.1809531354.1646633279"
   [[ "$version" == "6" ]] && curl_arg="-6"
 
-  body="$(curl "$curl_arg" -A "Mozilla/5.0" -fsSL --max-time 15 https://www.youtube.com/premium 2>/dev/null | head -c 2097152)"
+  response="$(
+    curl "$curl_arg" --max-time 10 -sSL \
+      -A "$browser_ua" \
+      -H "Accept-Language: en" \
+      -b "$youtube_cookie" \
+      -w '\n__YT_FINAL_URL__:%{url_effective}' \
+      "https://www.youtube.com/premium" 2>/dev/null \
+      | head -c 2097152
+  )"
+  final_url="$(printf "%s" "$response" | sed -n 's/^__YT_FINAL_URL__://p' | tail -n 1)"
+  body="$(printf "%s" "$response" | sed '/^__YT_FINAL_URL__:/,$d')"
   [[ -n "$body" ]] || return 0
 
-  if printf "%s" "$body" | grep -q 'www\.google\.cn'; then
-    sent_cn="1"
+  if printf "%s\n%s" "$body" "$final_url" | grep -q 'www\.google\.cn'; then
+    printf "CN\t是"
+    return 0
   fi
 
-  region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
+  region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
   [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "countryCode")"
-  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
   [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "GL")"
+  [[ -z "$region" ]] && region="$(printf "%s" "$final_url" | sed -nE 's/.*[?&]gl=([A-Za-z]{2}).*/\1/p' | head -n 1 | tr 'a-z' 'A-Z')"
 
-  if [[ "$sent_cn" == "1" && -z "$region" ]]; then
-    region="CN"
-  fi
-
-  if [[ "$sent_cn" == "1" || "$region" == "CN" ]]; then
+  if [[ "$region" == "CN" ]]; then
     sent_label="是"
   elif [[ -n "$region" ]]; then
+    sent_label="否"
+  elif printf "%s" "$body" | grep -q 'Premium is not available in your country\|ad-free'; then
     sent_label="否"
   fi
 
@@ -436,7 +453,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${BIN_PATH} -mode=loop -task=wheel -interval=20m -ip-version=dual -ip-file=${IP_FILE} -region-config=${INSTALL_DIR}/configs/los_angeles.json -keywords=${INSTALL_DIR}/data/keywords/kw_US.txt -ua=${INSTALL_DIR}/data/user_agents.txt -cookie-dir=${INSTALL_DIR}/.ips-cookies
+ExecStart=${BIN_PATH} -mode=loop -task=wheel -interval=20m -ip-version=dual -ip-file=${IP_FILE} -region-config=${INSTALL_DIR}/configs/los_angeles.json -keywords=${INSTALL_DIR}/data/keywords/kw_US.txt -ua=${INSTALL_DIR}/data/user_agents.txt -cookie-dir=${INSTALL_DIR}/.ips-cookies -status-file=${STATUS_FILE}
 Restart=always
 RestartSec=20
 KillSignal=SIGINT
@@ -519,6 +536,13 @@ restart_ip_sentinel() {
 
 status_ip_sentinel() {
   systemctl --no-pager --full status "$SERVICE_NAME" || true
+  ui_section "独立状态文件"
+  ui_kv "路径" "$STATUS_FILE"
+  if [[ -s "$STATUS_FILE" ]]; then
+    sed -n '1,120p' "$STATUS_FILE"
+  else
+    warn "状态文件暂未生成，服务完成第一轮后会自动写入。"
+  fi
 }
 
 add_ip() {
