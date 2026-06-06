@@ -84,10 +84,10 @@ read_prompt() {
 
 status_value() {
   case "$1" in
-    是|失败|不可用|未安装|未运行)
+    是|已送中|失败|不可用|未安装|未运行)
       printf "%s%s%s" "$C_RED" "$1" "$C_RESET"
       ;;
-    否|成功|可用|已运行|已配置)
+    否|正常|成功|可用|已运行|已配置)
       printf "%s%s%s" "$C_GREEN" "$1" "$C_RESET"
       ;;
     *)
@@ -243,6 +243,35 @@ detect_youtube_info() {
   printf "%s\t%s" "$region" "$sent_label"
 }
 
+detect_google_sent() {
+  local version="$1"
+  local curl_arg="-4"
+  [[ "$version" == "6" ]] && curl_arg="-6"
+
+  if ! curl "$curl_arg" -sL --max-time 3 https://www.google.com >/dev/null 2>&1; then
+    printf "不支持或连接超时"
+  elif curl "$curl_arg" -sL --max-time 3 https://www.google.com 2>/dev/null | grep -q "google.cn"; then
+    printf "已送中"
+  else
+    printf "正常"
+  fi
+}
+
+combined_sent_status() {
+  local youtube_sent="$1"
+  local google_sent="$2"
+
+  if [[ "$youtube_sent" == "是" || "$youtube_sent" == "已送中" || "$google_sent" == "是" || "$google_sent" == "已送中" ]]; then
+    printf "已送中"
+  elif [[ "$youtube_sent" == "否" || "$google_sent" == "正常" ]]; then
+    printf "正常"
+  elif [[ "$youtube_sent" == "未知" && "$google_sent" == "不支持或连接超时" ]]; then
+    printf "不支持或连接超时"
+  else
+    printf "未知"
+  fi
+}
+
 json_value() {
   local key="$1"
   sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
@@ -251,7 +280,7 @@ json_value() {
 print_exit_info() {
   local version="$1"
   local label="$2"
-  local json ip country country_code region city isp org asn timezone youtube_info youtube_region youtube_sent
+  local json ip country country_code region city isp org asn timezone youtube_info youtube_region youtube_sent google_sent combined_sent
 
   ui_section "${label} 出口信息"
   ip="$(detect_public_ip "$version")"
@@ -259,6 +288,8 @@ print_exit_info() {
   youtube_region="${youtube_info%%$'\t'*}"
   youtube_sent="${youtube_info#*$'\t'}"
   [[ "$youtube_sent" == "$youtube_info" ]] && youtube_sent="未知"
+  google_sent="$(detect_google_sent "$version")"
+  combined_sent="$(combined_sent_status "${youtube_sent:-未知}" "${google_sent:-未知}")"
   json="$(detect_geo_json "$ip")"
 
   if [[ -z "$json" ]]; then
@@ -270,6 +301,8 @@ print_exit_info() {
     fi
     ui_kv "YouTube 区域" "${youtube_region:-未识别}"
     ui_kv "YouTube 送中" "$(status_value "${youtube_sent:-未知}")"
+    ui_kv "Google 送中" "$(status_value "${google_sent:-未知}")"
+    ui_kv "综合送中" "$(status_value "${combined_sent:-未知}")"
     return 0
   fi
 
@@ -304,6 +337,8 @@ print_exit_info() {
   [[ -n "$timezone" ]] && ui_kv "时区" "$timezone"
   ui_kv "YouTube 区域" "${youtube_region:-未识别}"
   ui_kv "YouTube 送中" "$(status_value "${youtube_sent:-未知}")"
+  ui_kv "Google 送中" "$(status_value "${google_sent:-未知}")"
+  ui_kv "综合送中" "$(status_value "${combined_sent:-未知}")"
 }
 
 detect_current_exit() {
