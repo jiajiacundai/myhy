@@ -108,6 +108,65 @@ detect_public_ip() {
   } | tr -d '[:space:]'
 }
 
+detect_geo_json() {
+  local version="$1"
+  local curl_arg="-4"
+  [[ "$version" == "6" ]] && curl_arg="-6"
+
+  curl "$curl_arg" -fsS --max-time 10 https://api.ip.sb/geoip 2>/dev/null \
+    || curl "$curl_arg" -fsS --max-time 10 https://ipinfo.io/json 2>/dev/null
+}
+
+json_value() {
+  local key="$1"
+  sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+}
+
+print_exit_info() {
+  local version="$1"
+  local label="$2"
+  local json ip country region city isp org asn timezone
+
+  printf "\n%s%s 出口信息%s\n" "$C_BOLD" "$label" "$C_RESET"
+  json="$(detect_geo_json "$version")"
+  if [[ -z "$json" ]]; then
+    ip="$(detect_public_ip "$version")"
+    if [[ -n "$ip" ]]; then
+      printf "IP: %s\n" "$ip"
+      warn "${label} 地理信息接口不可用，仅显示出口 IP。"
+    else
+      warn "${label} 出口不可用或外部接口无法访问。"
+    fi
+    return 0
+  fi
+
+  ip="$(printf "%s" "$json" | json_value "ip")"
+  country="$(printf "%s" "$json" | json_value "country")"
+  [[ -z "$country" ]] && country="$(printf "%s" "$json" | json_value "country_code")"
+  region="$(printf "%s" "$json" | json_value "region")"
+  city="$(printf "%s" "$json" | json_value "city")"
+  isp="$(printf "%s" "$json" | json_value "isp")"
+  org="$(printf "%s" "$json" | json_value "organization")"
+  [[ -z "$org" ]] && org="$(printf "%s" "$json" | json_value "org")"
+  asn="$(printf "%s" "$json" | sed -n 's/.*"asn"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/AS\1/p' | head -n 1)"
+  timezone="$(printf "%s" "$json" | json_value "timezone")"
+
+  printf "IP: %s\n" "${ip:-未知}"
+  printf "国家/地区: %s\n" "${country:-未知}"
+  printf "省州: %s\n" "${region:-未知}"
+  printf "城市: %s\n" "${city:-未知}"
+  printf "运营商/组织: %s\n" "${isp:-${org:-未知}}"
+  [[ -n "$asn" ]] && printf "ASN: %s\n" "$asn"
+  [[ -n "$timezone" ]] && printf "时区: %s\n" "$timezone"
+}
+
+detect_current_exit() {
+  install_dependencies || return 1
+  printf "\n%s检测当前出口信息%s\n" "$C_BOLD" "$C_RESET"
+  print_exit_info "4" "IPv4"
+  print_exit_info "6" "IPv6"
+}
+
 validate_ipv4() {
   local ip="$1" a b c d
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
@@ -493,14 +552,16 @@ main_menu() {
     printf "1. 安装 IP-Sentinel\n"
     printf "2. 管理 IP-Sentinel\n"
     printf "3. 管理 IP-Sentinel 配置\n"
-    printf "4. 卸载 IP-Sentinel\n"
+    printf "4. 检测当前出口信息\n"
+    printf "5. 卸载 IP-Sentinel\n"
     printf "0. 退出\n"
     read -r -p "请选择: " choice
     case "$choice" in
       1) install_ip_sentinel; pause ;;
       2) manage_menu ;;
       3) config_menu ;;
-      4) uninstall_ip_sentinel; pause ;;
+      4) detect_current_exit; pause ;;
+      5) uninstall_ip_sentinel; pause ;;
       0) exit 0 ;;
       *) err "无效选择。"; pause ;;
     esac
