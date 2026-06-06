@@ -96,6 +96,11 @@ status_value() {
   esac
 }
 
+contains_google_cn() {
+  local text="$*"
+  [[ "${text,,}" == *google.cn* ]]
+}
+
 service_state() {
   command -v systemctl >/dev/null 2>&1 || { printf "不可用"; return 0; }
   systemctl cat "$SERVICE_NAME" >/dev/null 2>&1 || { printf "未安装"; return 0; }
@@ -203,57 +208,69 @@ extract_country_code() {
 detect_youtube_info() {
   local version="$1"
   local curl_arg="-4"
-  local response body final_url region sent_label="未知"
+  local response body final_url region first_region="" sent_label="未知" attempt
   local browser_ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-  local youtube_cookie="YSC=BiCUU3-5Gdk; CONSENT=YES+cb.20220301-11-p0.en+FX+700; GPS=1; VISITOR_INFO1_LIVE=4VwPMkB7W5A; PREF=tz=Asia.Shanghai; _gcl_au=1.1.1809531354.1646633279"
   [[ "$version" == "6" ]] && curl_arg="-6"
 
-  response="$(
-    curl "$curl_arg" --max-time 10 -sSL \
-      -A "$browser_ua" \
-      -H "Accept-Language: en" \
-      -b "$youtube_cookie" \
-      -w '\n__YT_FINAL_URL__:%{url_effective}' \
-      "https://www.youtube.com/premium" 2>/dev/null \
-      | head -c 2097152
-  )"
-  final_url="$(printf "%s" "$response" | sed -n 's/^__YT_FINAL_URL__://p' | tail -n 1)"
-  body="$(printf "%s" "$response" | sed '/^__YT_FINAL_URL__:/,$d')"
-  [[ -n "$body" ]] || return 0
+  for attempt in 1 2 3; do
+    response="$(
+      curl "$curl_arg" --max-time 10 -sSL \
+        -A "$browser_ua" \
+        -H "Accept-Language: en" \
+        -w '\n__YT_FINAL_URL__:%{url_effective}' \
+        "https://www.youtube.com/premium" 2>/dev/null \
+        | head -c 2097152
+    )"
+    final_url="$(printf "%s" "$response" | sed -n 's/^__YT_FINAL_URL__://p' | tail -n 1)"
+    body="$(printf "%s" "$response" | sed '/^__YT_FINAL_URL__:/,$d')"
+    [[ -n "$body" ]] || continue
 
-  if printf "%s\n%s" "$body" "$final_url" | grep -q 'www\.google\.cn'; then
-    printf "CN\t是"
-    return 0
-  fi
+    if contains_google_cn "$body" "$final_url"; then
+      printf "CN\t是"
+      return 0
+    fi
 
-  region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
-  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "countryCode")"
-  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
-  [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "GL")"
-  [[ -z "$region" ]] && region="$(printf "%s" "$final_url" | sed -nE 's/.*[?&]gl=([A-Za-z]{2}).*/\1/p' | head -n 1 | tr 'a-z' 'A-Z')"
+    region="$(printf "%s" "$body" | extract_country_code "contentRegion")"
+    [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "countryCode")"
+    [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "INNERTUBE_CONTEXT_GL")"
+    [[ -z "$region" ]] && region="$(printf "%s" "$body" | extract_country_code "GL")"
+    [[ -z "$region" ]] && region="$(printf "%s" "$final_url" | sed -nE 's/.*[?&]gl=([A-Za-z]{2}).*/\1/p' | head -n 1 | tr 'a-z' 'A-Z')"
 
-  if [[ "$region" == "CN" ]]; then
-    sent_label="是"
-  elif [[ -n "$region" ]]; then
-    sent_label="否"
-  elif printf "%s" "$body" | grep -q 'Premium is not available in your country\|ad-free'; then
-    sent_label="否"
-  fi
+    if [[ "$region" == "CN" ]]; then
+      printf "CN\t是"
+      return 0
+    elif [[ -n "$region" ]]; then
+      [[ -z "$first_region" ]] && first_region="$region"
+      sent_label="否"
+    elif printf "%s" "$body" | grep -q 'Premium is not available in your country\|ad-free'; then
+      sent_label="否"
+    fi
+  done
 
-  printf "%s\t%s" "$region" "$sent_label"
+  printf "%s\t%s" "$first_region" "$sent_label"
 }
 
 detect_google_sent() {
   local version="$1"
   local curl_arg="-4"
+  local body attempt saw_ok=0
   [[ "$version" == "6" ]] && curl_arg="-6"
 
-  if ! curl "$curl_arg" -sL --max-time 3 https://www.google.com >/dev/null 2>&1; then
-    printf "不支持或连接超时"
-  elif curl "$curl_arg" -sL --max-time 3 https://www.google.com 2>/dev/null | grep -q "google.cn"; then
-    printf "已送中"
-  else
+  for attempt in 1 2 3; do
+    if ! body="$(curl "$curl_arg" -sL --max-time 3 https://www.google.com 2>/dev/null)"; then
+      continue
+    fi
+    if contains_google_cn "$body"; then
+      printf "已送中"
+      return 0
+    fi
+    saw_ok=1
+  done
+
+  if [[ "$saw_ok" == "1" ]]; then
     printf "正常"
+  else
+    printf "不支持或连接超时"
   fi
 }
 
