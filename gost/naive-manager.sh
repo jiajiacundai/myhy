@@ -196,6 +196,17 @@ format_keepalive() {
   echo "白天 $day / 夜间 $night"
 }
 
+format_max_lifetime() {
+  local enabled="$1" day="$2" night="$3"
+  if [[ "$enabled" != "true" ]]; then
+    echo "关闭"
+    return
+  fi
+  [[ -z "$day" || "$day" == "0" ]] && day="不回收"
+  [[ -z "$night" || "$night" == "0" ]] && night="不回收"
+  echo "白天 $day / 晚高峰夜间 $night"
+}
+
 prompt_quic_congestion_control() {
   local default_value="${1:-bbr}" value
   while true; do
@@ -243,6 +254,13 @@ load_state() {
   QUIC_KEEPALIVE_ENABLED="false"
   QUIC_KEEPALIVE_DAY="300s"
   QUIC_KEEPALIVE_NIGHT="25s"
+  # 分时段最大存活期默认关。开启后每条 QUIC 连接到期被服务端优雅关闭、客户端无感
+  # 重连，破解 BBRv1 带宽估计在持续丢包下塌缩、被 keep_alive 续命的长连接无法自愈
+  # 的问题（晚高峰丢包时慢、重启服务端秒恢复即此症状）。DAY/NIGHT 为开启后推荐预
+  # 填值：白天 25m 丢包轻、少重连；晚高峰/夜间 15m 更激进回收、更快重探带宽。
+  QUIC_MAXLIFE_ENABLED="false"
+  QUIC_MAXLIFE_DAY="25m"
+  QUIC_MAXLIFE_NIGHT="15m"
   QUIC_ALLOW_0RTT="true"
   QUIC_INITIAL_STREAM_RECEIVE_WINDOW="8388608"
   QUIC_MAX_STREAM_RECEIVE_WINDOW="67108864"
@@ -278,6 +296,9 @@ TCP_KEEPALIVE_NIGHT=$(printf '%q' "$TCP_KEEPALIVE_NIGHT")
 QUIC_KEEPALIVE_ENABLED=$(printf '%q' "$QUIC_KEEPALIVE_ENABLED")
 QUIC_KEEPALIVE_DAY=$(printf '%q' "$QUIC_KEEPALIVE_DAY")
 QUIC_KEEPALIVE_NIGHT=$(printf '%q' "$QUIC_KEEPALIVE_NIGHT")
+QUIC_MAXLIFE_ENABLED=$(printf '%q' "$QUIC_MAXLIFE_ENABLED")
+QUIC_MAXLIFE_DAY=$(printf '%q' "$QUIC_MAXLIFE_DAY")
+QUIC_MAXLIFE_NIGHT=$(printf '%q' "$QUIC_MAXLIFE_NIGHT")
 QUIC_ALLOW_0RTT=$(printf '%q' "$QUIC_ALLOW_0RTT")
 QUIC_INITIAL_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_INITIAL_STREAM_RECEIVE_WINDOW")
 QUIC_MAX_STREAM_RECEIVE_WINDOW=$(printf '%q' "$QUIC_MAX_STREAM_RECEIVE_WINDOW")
@@ -380,6 +401,20 @@ collect_node_config() {
       QUIC_KEEPALIVE_DAY="$(prompt_value "QUIC 白天 PING 间隔（推荐 300s，空/0=该时段不发）" "${QUIC_KEEPALIVE_DAY:-300s}" false)"
       QUIC_KEEPALIVE_NIGHT="$(prompt_value "QUIC 夜间 PING 间隔（推荐 25s，空/0=该时段不发）" "${QUIC_KEEPALIVE_NIGHT:-25s}" false)"
     fi
+    printf "${CYAN}QUIC 连接最大存活期（分时段优雅回收，破解晚高峰丢包变慢、重启才恢复）${NC}\n"
+    printf "  丢包严重时 BBR 带宽估计会塌缩，被保活续命的长连接卡在低速无法自愈；\n"
+    printf "  到期用 H3_NO_ERROR 优雅关闭迫使客户端无感重连、拿到全新 STARTUP 的 BBR。\n"
+    if [[ "${QUIC_MAXLIFE_ENABLED:-false}" == "false" ]]; then
+      confirm_default_no "启用 QUIC 连接最大存活期（推荐晚高峰慢、重启恢复的节点开启）" \
+        && QUIC_MAXLIFE_ENABLED="true" || QUIC_MAXLIFE_ENABLED="false"
+    else
+      confirm_default_yes "启用 QUIC 连接最大存活期（推荐晚高峰慢、重启恢复的节点开启）" \
+        && QUIC_MAXLIFE_ENABLED="true" || QUIC_MAXLIFE_ENABLED="false"
+    fi
+    if [[ "$QUIC_MAXLIFE_ENABLED" == "true" ]]; then
+      QUIC_MAXLIFE_DAY="$(prompt_value "QUIC 白天连接最大存活期（推荐 25m，空/0=该时段不回收）" "${QUIC_MAXLIFE_DAY:-25m}" false)"
+      QUIC_MAXLIFE_NIGHT="$(prompt_value "QUIC 晚高峰/夜间连接最大存活期（推荐 15m，空/0=该时段不回收）" "${QUIC_MAXLIFE_NIGHT:-15m}" false)"
+    fi
     if [[ "${QUIC_ALLOW_0RTT:-true}" == "false" ]]; then
       if confirm_default_no "启用 QUIC 0-RTT（默认启用，对齐 Caddy/quic-go）"; then
         QUIC_ALLOW_0RTT="true"
@@ -463,6 +498,11 @@ write_naive_config() {
         "enabled": $([[ "$QUIC_KEEPALIVE_ENABLED" == "true" ]] && printf 'true' || printf 'false'),
         "day_period": $(json_string "$QUIC_KEEPALIVE_DAY"),
         "night_period": $(json_string "$QUIC_KEEPALIVE_NIGHT")
+      },
+      "max_lifetime": {
+        "enabled": $([[ "$QUIC_MAXLIFE_ENABLED" == "true" ]] && printf 'true' || printf 'false'),
+        "day_period": $(json_string "$QUIC_MAXLIFE_DAY"),
+        "night_period": $(json_string "$QUIC_MAXLIFE_NIGHT")
       },
       "allow_0rtt": $([[ "$QUIC_ALLOW_0RTT" == "true" ]] && printf 'true' || printf 'false'),
       "max_incoming_streams": 0,
@@ -656,6 +696,7 @@ print_node_summary() {
   if [[ "$ENABLE_QUIC" == "true" ]]; then
     echo "QUIC CC:   ${QUIC_CONGESTION_CONTROL:-bbr}"
     echo "QUIC 保活: $(format_keepalive "${QUIC_KEEPALIVE_ENABLED:-false}" "${QUIC_KEEPALIVE_DAY:-300s}" "${QUIC_KEEPALIVE_NIGHT:-25s}")"
+    echo "QUIC 存活期: $(format_max_lifetime "${QUIC_MAXLIFE_ENABLED:-false}" "${QUIC_MAXLIFE_DAY:-25m}" "${QUIC_MAXLIFE_NIGHT:-15m}")"
     echo "QUIC 0RTT: ${QUIC_ALLOW_0RTT:-true}"
     echo "QUIC 窗口: stream ${QUIC_INITIAL_STREAM_RECEIVE_WINDOW:-8388608}/${QUIC_MAX_STREAM_RECEIVE_WINDOW:-67108864}, conn ${QUIC_INITIAL_CONNECTION_RECEIVE_WINDOW:-20971520}/${QUIC_MAX_CONNECTION_RECEIVE_WINDOW:-134217728}"
   fi
