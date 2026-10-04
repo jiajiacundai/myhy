@@ -210,14 +210,14 @@ format_max_lifetime() {
 prompt_quic_congestion_control() {
   local default_value="${1:-bbr}" value
   while true; do
-    value="$(prompt_value "QUIC 拥塞控制 bbr/bbr_standard/bbr2/bbr2_variant/cubic/reno" "$default_value" false)"
+    value="$(prompt_value "QUIC 拥塞控制 bbr/cubic/reno" "$default_value" false)"
     case "$value" in
-      bbr|bbr_standard|bbr2|bbr2_variant|cubic|reno)
+      bbr|cubic|reno)
         printf '%s' "$value"
         return 0
         ;;
       *)
-        warn "无效 QUIC 拥塞控制: $value"
+        warn "无效 QUIC 拥塞控制: $value（仅支持 bbr/cubic/reno）"
         ;;
     esac
   done
